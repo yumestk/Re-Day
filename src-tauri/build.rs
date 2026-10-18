@@ -19,6 +19,13 @@ fn main() {
             "save_recurrence",
             "load_instances",
             "reschedule_instance",
+            "load_calendar",
+            "load_date",
+            "load_review_prompt",
+            "save_review",
+            "skip_plan",
+            "preview_ordinary_reschedule",
+            "reschedule_ordinary",
         ]),
     ))
     .expect("Tauri build configuration is invalid");

@@ -101,6 +101,7 @@ export async function checkRecurrence({ click, fill, execute, until, sql, has, s
 
   await openQuest('每日日语精读');
   await clickText('归档任务');
+  await until(async () => !await execute('return !!document.querySelector("aside[aria-label] form")'), 'archive committed before navigation');
   await clickText('Today今日行动');
   await fill('input[aria-label="查看日期"]', tomorrow);
   await until(async () => !!await execute('return !!document.querySelector(arguments[0])', makeup), 'archived template keeps existing makeup');
@@ -113,6 +114,7 @@ export async function checkRecurrence({ click, fill, execute, until, sql, has, s
   await select('select[aria-label="任务状态筛选"]', 'archived');
   await openQuest('每日日语精读');
   await clickText('恢复归档任务');
+  await until(async () => !await execute('return !!document.querySelector("aside[aria-label] form")'), 'unarchive committed before filtering');
   await select('select[aria-label="任务状态筛选"]', 'active');
   await openQuest('每日日语精读');
   await clickText('选择已有实例');

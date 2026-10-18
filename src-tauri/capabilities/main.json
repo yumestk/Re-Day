@@ -27,6 +27,13 @@
     "allow-preview-recurrence",
     "allow-save-recurrence",
     "allow-load-instances",
-    "allow-reschedule-instance"
+    "allow-reschedule-instance",
+    "allow-load-calendar",
+    "allow-load-date",
+    "allow-load-review-prompt",
+    "allow-save-review",
+    "allow-skip-plan",
+    "allow-preview-ordinary-reschedule",
+    "allow-reschedule-ordinary"
   ]
 }

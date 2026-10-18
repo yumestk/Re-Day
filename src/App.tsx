@@ -6,6 +6,7 @@ import { muteAudio, playCue, preloadSounds, primeAudio } from './feedback';
 import s from './App.module.css';
 import { Icon, Modal } from './ui';
 import { QuestLinks } from './editors';
+import { CalendarReview, SchedulePicker } from './CalendarReview';
 import { RecurrenceEditor, InstancePicker, RescheduleEditor } from './Recurrence';
 import { Quests, QuestEditor, GoalEditor, ExecutionEditor, ScheduleEditor, RecordList, DeleteDialog } from './Quests';
 
@@ -19,11 +20,14 @@ function shiftDate(date: string, days: number) {
 }
 function shortDate(date: string) { return date.slice(5).replace('-', '.'); }
 
-type Editor = { kind: 'create'; slot: Slot } | { kind: 'edit'; planId: string; selectedPlan?: TaskItem } | { kind: 'quest'; questId?: string; parentId?: string } | { kind: 'goal'; goal: Goal | null } | { kind: 'execution'; questId: string; planId?: string; selectedPlan?: TaskItem; operation: 'progress' | 'completion' | 'undo' } | { kind: 'schedule'; questId: string } | { kind: 'rule'; questId: string; from?: string } | { kind: 'instances'; questId: string } | { kind: 'reschedule'; questId: string; selectedPlan: TaskItem };
+type Editor = { kind: 'create'; slot: Slot } | { kind: 'edit'; planId: string; selectedPlan?: TaskItem } | { kind: 'quest'; questId?: string; parentId?: string } | { kind: 'goal'; goal: Goal | null } | { kind: 'execution'; questId: string; planId?: string; selectedPlan?: TaskItem; occurredOn?: string; operation: 'progress' | 'completion' | 'undo' } | { kind: 'schedule'; questId: string; initialDate?: string } | { kind: 'chooseSchedule' } | { kind: 'rule'; questId: string; from?: string } | { kind: 'instances'; questId: string } | { kind: 'reschedule'; questId: string; selectedPlan: TaskItem };
 
 export default function App() {
   const [date, setDate] = useState(localDate);
-  const [page, setPage] = useState<'today' | 'quests'>('today');
+  const [page, setPage] = useState<'today' | 'quests' | 'calendar' | 'review'>('today');
+  const [refresh, setRefresh] = useState(0);
+  const [reviewPrompt, setReviewPrompt] = useState<import('./api').ReviewState | null>(null);
+  const [skip, setSkip] = useState<TaskItem | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [deletion, setDeletion] = useState<DeletePreview | null>(null);
   const [day, setDay] = useState<DayView | null>(null);
@@ -52,8 +56,8 @@ export default function App() {
     const sequence = ++loadSequence.current;
     if (showLoading) setLoading(true);
     try {
-      const [result, workspace] = await Promise.all([api.loadDay(value), api.loadWorkspace()]);
-      if (sequence === loadSequence.current) { setDay(result); setWorkspace(workspace); setPreferences(result.preferences); setError(null); }
+      const [result, workspace, prompt] = await Promise.all([api.loadDay(value), api.loadWorkspace(), api.reviewPrompt()]);
+      if (sequence === loadSequence.current) { setDay(result); setWorkspace(workspace); setReviewPrompt(prompt); setPreferences(result.preferences); setError(null); }
     } catch (error) { if (sequence === loadSequence.current) setError(errorMessage(error)); }
     finally { if (sequence === loadSequence.current) setLoading(false); }
   }, []);
@@ -150,6 +154,7 @@ export default function App() {
     if (!result) return false;
     applyItem(result.item);
     await load(date, false);
+    setRefresh(v => v + 1);
     setNotice(current ? '修改已保存。' : draft.date === date ? '新的安排，已加入当日。' : `已安排至 ${shortDate(draft.date)}。`);
     return true;
   }
@@ -178,13 +183,14 @@ export default function App() {
     if (dirty || pending.size) { setNotice('请先保存当前编辑，或等待操作完成。'); return; }
     if (value === date) return;
     setEditor(null);
-    setPage('today');
+    if (page === 'quests') setPage('today');
     setDate(value);
   }
-  function navigatePage(value: 'today' | 'quests') {
+  function navigatePage(value: 'today' | 'quests' | 'calendar' | 'review') {
     if (dirty || pending.size) { setNotice('请先保存或关闭当前编辑。'); return; }
     setEditor(null); setPage(value);
     if (value === 'today') navigateDate(localDate());
+    if (value === 'review' && date > localDate()) setDate(localDate());
   }
   const closeDelete = useCallback(() => setDeletion(null), []);
   async function previewDelete(questId: string) {
@@ -202,7 +208,12 @@ export default function App() {
     setDeletion(null);
     if (result) { setEditor(null); setDirty(false); await load(date, false); setNotice('任务和所列历史已彻底删除；子任务已保留。'); }
   }
-  async function changed() { await load(date, false); setNotice('修改已保存到此设备。'); }
+  async function changed() { await load(date, false); setRefresh(v => v + 1); setNotice('修改已保存到此设备。'); }
+  async function reviewed(on: string) { if (!workspace) return; const result = await mutate(`review-${on}`, () => api.saveReview(workspace.datasetId, on, 'reviewed')); if (result !== null) await changed(); }
+  async function dismissPrompt() { if (!workspace || !reviewPrompt) return; const result = await mutate('review-prompt', () => api.saveReview(workspace.datasetId, reviewPrompt.date, 'dismiss')); if (result !== null) await load(date, false); }
+  const closeSkip = useCallback(() => setSkip(null), []);
+  async function skipPlan() { if (!workspace || !skip) return; const result = await mutate(skip.taskMode === 'single' ? skip.questId : skip.planId, () => api.skipPlan(workspace.datasetId, skip)); if (result !== null) { setSkip(null); await changed(); } }
+  function openReview(on = date) { if (dirty || pending.size) { setNotice('请先保存或关闭当前编辑。'); return; } setEditor(null); setDate(on > localDate() ? localDate() : on); setPage('review'); }
   const closePreferences = useCallback(() => setShowPreferences(false), []);
   const cancelExit = useCallback(() => setExitRequested(false), []);
   async function exit(save: boolean) {
@@ -230,6 +241,8 @@ export default function App() {
       <div className={s.railSection}>日 常 / DAILY</div>
       <button className={page === 'today' ? s.activeNav : s.inactiveNav} onClick={() => { navigatePage('today'); setFilter('all'); }} aria-current={page === 'today' ? 'page' : undefined}><Icon name="sun" /><span>Today<small>今日行动</small></span><span className={s.navDot} /></button>
       <button className={page === 'quests' ? s.activeNav : s.inactiveNav} onClick={() => navigatePage('quests')} aria-current={page === 'quests' ? 'page' : undefined}><Icon name="spark" /><span>Quests<small>目标与任务</small></span><span className={s.navDot} /></button>
+      <button className={page === 'calendar' ? s.activeNav : s.inactiveNav} onClick={() => navigatePage('calendar')} aria-current={page === 'calendar' ? 'page' : undefined}><Icon name="calendar" /><span>Calendar<small>日历与计划</small></span><span className={s.navDot} /></button>
+      <button className={page === 'review' ? s.activeNav : s.inactiveNav} onClick={() => openReview()} aria-current={page === 'review' ? 'page' : undefined}><Icon name="moon" /><span>Review<small>每日回顾</small></span><span className={s.navDot} /></button>
       <div className={s.railFoot}>
         <button className={s.settingsButton} onClick={() => setShowPreferences(true)} disabled={!preferences}><Icon name="settings" /><span>声音与动效</span></button>
         <div className={s.privateNote}><span />仅在此设备保存<small>LifeIsRPG · 0.1</small></div>
@@ -237,16 +250,20 @@ export default function App() {
     </aside>
 
     <main className={`${s.workspace} ${editor ? s.withEditor : ''}`}>
-      {page === 'quests' && workspace ? <>
+      {(page === 'calendar' || page === 'review') && workspace ? <>
+        {error && <div className={s.error} role="alert">{error}<button onClick={() => void changed()}>重新读取</button></div>}
+        <CalendarReview mode={page} date={date} refresh={refresh} workspace={workspace} busy={pending.size > 0} onDate={navigateDate} onTask={plan => openEditor({ kind: 'edit', planId: plan.planId, selectedPlan: plan })} onExecute={(plan, operation) => openEditor({ kind: 'execution', questId: plan.questId, planId: plan.planId, selectedPlan: plan, occurredOn: date <= workspace.today ? date : workspace.today, operation })} onReschedule={plan => openEditor({ kind: 'reschedule', questId: plan.questId, selectedPlan: plan })} onSkip={plan => { if (!dirty && !pending.size) setSkip(plan); }} onCreate={() => openEditor({ kind: 'create', slot: 'morning' })} onSchedule={() => openEditor({ kind: 'chooseSchedule' })} onReviewed={reviewed} onTomorrow={() => { if (!dirty && !pending.size) { setEditor(null); setDate(shiftDate(workspace.today, 1)); setPage('calendar'); } }} />
+      </> : page === 'quests' && workspace ? <>
         {error && <div className={s.error} role="alert"><span>{error}</span><button onClick={() => void load(date, false)}>重新读取</button></div>}
         <Quests data={workspace} selected={currentQuest?.id} onQuest={id => openEditor({ kind: 'quest', questId: id })} onCreate={() => openEditor({ kind: 'quest' })} onGoal={goal => openEditor({ kind: 'goal', goal })} />
       </> : <>
+      {reviewPrompt && date === workspace?.today && <div className={s.reviewPrompt} role="status"><div><b>{reviewPrompt.date} 尚未标记回顾</b><span>可以回看昨天，也可以直接开始今天。</span></div><button onClick={() => openReview(reviewPrompt.date)}>回顾昨天</button><button onClick={() => void dismissPrompt()} disabled={pending.size > 0}>今天暂不提示</button></div>}
       <header className={s.hero}>
         <div className={s.heroGrid} aria-hidden="true" /><div className={s.heroCut} aria-hidden="true" />
         <div className={s.heroTop}><span className={s.eyebrow}>YOUR LIFE. YOUR NEXT MOVE.</span><span className={s.localBadge}><span />本地 · 离线可用</span></div>
         <div className={s.heroBody}><div><div className={s.chapter}>DAILY / ACTION</div><h1>{date === localDate() ? 'TODAY' : date > localDate() ? 'UP NEXT' : 'THAT DAY'}<span className={s.titlePeriod}>.</span></h1><p>{date === localDate() ? '把想做的事，变成今天的行动。' : date > localDate() ? '为接下来的一天，留好位置。' : '回看这一天的安排与完成。'}</p></div>
           <div className={s.dateStamp}><span>{selectedDate.getFullYear()} / {weekday}</span><strong>{shortDate(date)}</strong><em>{new Intl.DateTimeFormat('zh-CN', { weekday: 'long' }).format(selectedDate)}</em></div></div>
-        <div className={s.heroBottom}><div className={s.planAct}><b>PLAN</b><span>—</span><b className={s.act}>ACT</b><span>—</span><b>REVIEW</b></div><span className={s.heroSmall}>ONE THING AT A TIME <Icon name="arrow" size={16} /></span></div>
+        <div className={s.heroBottom}><div className={s.planAct}><b>PLAN</b><span>—</span><b className={s.act}>ACT</b><span>—</span><button onClick={() => openReview()}>REVIEW / 回顾</button></div><span className={s.heroSmall}>ONE THING AT A TIME <Icon name="arrow" size={16} /></span></div>
       </header>
 
       <section className={s.planner} aria-label="当日安排">
@@ -278,13 +295,15 @@ export default function App() {
     </main>
 
     {editor?.kind === 'create' && visibleDay && workspace && <TaskEditor key={`new-${editor.slot}`} workspace={workspace} initialDate={date} initialSlot={editor.slot} today={visibleDay.today} busy={pending.has('create')} onSave={saveTask} onClose={() => { setEditor(null); setDirty(false); }} onDirty={setDirty} saveRef={saveEditorRef} />}
-    {editorProps && editor && (editor.kind === 'edit' || editor.kind === 'quest') && (editor.kind === 'quest' || currentQuest) && <QuestEditor key={currentItem?.planId ?? currentQuest?.id ?? `quest-new-${editor.kind === 'quest' ? editor.parentId ?? '' : ''}`} {...editorProps} quest={currentQuest ?? null} plan={editor.kind === 'edit' ? currentItem : undefined} initialParent={editor.kind === 'quest' ? editor.parentId : undefined} onQuest={questId => openEditor({ kind: 'quest', questId })} onCreateChild={parentId => openEditor({ kind: 'quest', parentId })} onExecution={operation => currentQuest && openEditor({ kind: 'execution', questId: currentQuest.id, planId: editor.kind === 'edit' ? currentItem?.planId : undefined, selectedPlan: currentItem, operation })} onSchedule={() => currentQuest && openEditor({ kind: 'schedule', questId: currentQuest.id })} onDelete={() => currentQuest && void previewDelete(currentQuest.id)} onRule={() => currentQuest && openEditor({ kind: 'rule', questId: currentQuest.id, from: currentItem?.scheduledOn })} onInstances={() => currentQuest && openEditor({ kind: 'instances', questId: currentQuest.id })} onReschedule={() => currentQuest && currentItem && openEditor({ kind: 'reschedule', questId: currentQuest.id, selectedPlan: currentItem })} />}
+    {editorProps && editor && (editor.kind === 'edit' || editor.kind === 'quest') && (editor.kind === 'quest' || currentQuest) && <QuestEditor key={currentItem?.planId ?? currentQuest?.id ?? `quest-new-${editor.kind === 'quest' ? editor.parentId ?? '' : ''}`} {...editorProps} quest={currentQuest ?? null} plan={editor.kind === 'edit' ? currentItem : undefined} initialParent={editor.kind === 'quest' ? editor.parentId : undefined} onQuest={questId => openEditor({ kind: 'quest', questId })} onCreateChild={parentId => openEditor({ kind: 'quest', parentId })} onExecution={operation => currentQuest && openEditor({ kind: 'execution', questId: currentQuest.id, planId: editor.kind === 'edit' ? currentItem?.planId : undefined, selectedPlan: currentItem, operation })} onSchedule={() => currentQuest && openEditor({ kind: 'schedule', questId: currentQuest.id })} onDelete={() => currentQuest && void previewDelete(currentQuest.id)} onRule={() => currentQuest && openEditor({ kind: 'rule', questId: currentQuest.id, from: currentItem?.scheduledOn })} onInstances={() => currentQuest && openEditor({ kind: 'instances', questId: currentQuest.id })} onReschedule={() => currentQuest && currentItem && openEditor({ kind: 'reschedule', questId: currentQuest.id, selectedPlan: currentItem })} onSkip={() => currentItem && !dirty && !pending.size && setSkip(currentItem)} />}
     {editorProps && editor?.kind === 'goal' && <GoalEditor key={editor.goal?.id ?? 'goal-new'} {...editorProps} run={(_key, op) => mutate(editor.goal?.id ?? 'goal-new', op)} goal={editor.goal} />}
-    {editorProps && editor?.kind === 'execution' && currentQuest && <ExecutionEditor key={`execution-${currentQuest.id}-${editor.operation}`} {...editorProps} quest={currentQuest} plan={currentItem} kind={editor.operation} />}
-    {editorProps && editor?.kind === 'schedule' && currentQuest && <ScheduleEditor key={`schedule-${currentQuest.id}`} {...editorProps} quest={currentQuest} />}
+    {editorProps && editor?.kind === 'execution' && currentQuest && <ExecutionEditor key={`execution-${currentQuest.id}-${editor.operation}`} {...editorProps} quest={currentQuest} plan={currentItem} kind={editor.operation} initialDate={editor.occurredOn} />}
+    {editorProps && editor?.kind === 'schedule' && currentQuest && <ScheduleEditor key={`schedule-${currentQuest.id}`} {...editorProps} quest={currentQuest} initialDate={editor.initialDate} />}
     {editorProps && editor?.kind === 'rule' && currentQuest && <RecurrenceEditor key={`rule-${currentQuest.id}`} {...editorProps} quest={currentQuest} initialDate={editor.from} />}
     {editorProps && editor?.kind === 'instances' && currentQuest && <InstancePicker key={`instances-${currentQuest.id}`} {...editorProps} quest={currentQuest} onSelect={plan => openEditor({ kind: 'edit', planId: plan.planId, selectedPlan: plan })} />}
     {editorProps && editor?.kind === 'reschedule' && currentQuest && currentItem && <RescheduleEditor key={`reschedule-${currentItem.planId}`} {...editorProps} quest={currentQuest} plan={currentItem} />}
+    {editorProps && editor?.kind === 'chooseSchedule' && <SchedulePicker {...editorProps} onSelect={questId => openEditor({ kind: 'schedule', questId, initialDate: date })} />}
+    {skip && <Modal title="放弃本次计划" onClose={closeSkip}><p className={s.modalIntro}>放弃 {skip.scheduledOn} 的「{skip.title}」安排？任务本身、此前进展和重复规则均保留。</p><div className={s.exitActions}><button className={s.dangerButton} disabled={pending.size > 0} onClick={() => void skipPlan()}>确认放弃本次</button><button className={s.secondaryButton} onClick={closeSkip}>保留安排</button></div></Modal>}
     {deletion && <DeleteDialog preview={deletion} busy={pending.has(deletion.questId)} onClose={closeDelete} onDelete={confirmed => void deleteQuest(confirmed)} />}
     {notice && <div className={s.notice} role="status"><Icon name="spark" size={16} /><span>{notice}</span></div>}
     {showPreferences && preferences && <Modal title="声音与动效" onClose={closePreferences}><p className={s.modalIntro}>给每次行动，一点恰到好处的反馈。</p><div className={s.preferenceRows}>

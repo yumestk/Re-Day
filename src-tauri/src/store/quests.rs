@@ -715,7 +715,7 @@ impl Store {
     pub fn schedule(
         &mut self,
         request: ScheduleRequest,
-        today: &str,
+        _today: &str,
         now: &str,
     ) -> Result<TaskItem> {
         self.check_dataset(&request.dataset_id)?;
@@ -746,11 +746,6 @@ impl Store {
         }
         if q.mode != "single" || q.status != "open" || q.archived_on.is_some() {
             return Err(validation("仅活跃的未完成普通任务可添加计划。"));
-        }
-        if request.draft.date.as_str() < today {
-            return Err(validation(
-                "过去的事实请使用补记；新增计划请选择今天或未来。",
-            ));
         }
         let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM plans WHERE quest_id=?1 AND scheduled_on=?2 AND disposition='active')",params![q.id,request.draft.date],|r|r.get(0))?;
         if exists {

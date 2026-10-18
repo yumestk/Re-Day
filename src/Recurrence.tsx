@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, errorMessage, slots, type Quest, type RuleDraft, type RulePreview, type RuleRequest, type Slot, type TaskItem } from './api';
+import { api, errorMessage, slots, type Quest, type RuleDraft, type RulePreview, type RuleRequest, type RescheduleRequest, type ReschedulePreview, type Slot, type TaskItem } from './api';
 import { EditorFrame, QuestLinks, type EditorProps } from './editors';
 import { Icon, Modal } from './ui';
 import s from './App.module.css';
@@ -80,11 +80,26 @@ export function RescheduleEditor({ quest, plan, ...props }: EditorProps & { ques
   const [draft, setDraft] = useState({ date: value, slot: plan.slot, startTime: plan.startTime ?? '', endTime: plan.endTime ?? '' });
   const original = useRef(JSON.stringify(draft));
   const intent = useRef({ id: crypto.randomUUID(), plan });
+  const [preview, setPreview] = useState<{ request: RescheduleRequest; result: ReschedulePreview } | null>(null);
+  const closePreview = useCallback(() => setPreview(null), []);
+  const commitOrdinary = async () => {
+    if (!preview) return;
+    const result = await props.run(plan.questId, () => api.rescheduleOrdinary(preview.request, preview.result.fingerprint));
+    setPreview(null);
+    if (result === null) return;
+    await props.onChanged(); props.onClose();
+  };
   const save = async () => {
+    if (quest.mode === 'single') {
+      const request = { datasetId: props.data.datasetId, planId: intent.current.plan.planId, makeupId: intent.current.id, expectedRevision: intent.current.plan.revision, expectedQuestRevision: intent.current.plan.questRevision, ...draft, startTime: draft.startTime || null, endTime: draft.endTime || null };
+      const result = await props.run(plan.questId, () => api.previewReschedule(request));
+      if (result) setPreview({ request, result });
+      return false;
+    }
     const result = await props.run(plan.planId, () => api.reschedule(props.data.datasetId, intent.current.plan, intent.current.id, { ...draft, startTime: draft.startTime || null, endTime: draft.endTime || null }));
     if (!result) return false; await props.onChanged(); return true;
   };
-  return <EditorFrame {...props} title="顺延或重新安排本次" submitLabel="确认生成补做" dirty={original.current !== JSON.stringify(draft)} onSave={save}>
-    <p className={s.executionTitle}>{plan.title}</p><p className={s.formHint}>来自 {plan.scheduledOn} 的安排。原计划与进展保留；目标日期即使已有正常实例，也会分别展示、独立完成。</p><label>补做日期<input required aria-label="补做日期" type="date" min={props.data.today} value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></label><label>时间段<select aria-label="补做时段" value={draft.slot} onChange={e => setDraft({ ...draft, slot: e.target.value as Slot })}>{slots.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}</select></label><div className={s.timeFields}><label>开始<input aria-label="补做开始时间" type="time" value={draft.startTime} onChange={e => setDraft({ ...draft, startTime: e.target.value })} /></label><label>结束<input aria-label="补做结束时间" type="time" value={draft.endTime} onChange={e => setDraft({ ...draft, endTime: e.target.value })} /></label></div>
-  </EditorFrame>;
+  return <><EditorFrame {...props} title="顺延或重新安排本次" submitLabel={quest.mode === 'single' ? '预览重新安排' : '确认生成补做'} dirty={original.current !== JSON.stringify(draft)} onSave={save}>
+    <p className={s.executionTitle}>{plan.title}</p><p className={s.formHint}>来自 {plan.scheduledOn} 的安排。原计划与进展保留。{quest.mode === 'recurring' ? '目标日期即使已有正常实例，也会分别展示、独立完成。' : '目标日已有该任务的活跃安排时，将复用其原时间及进展；确认前会显示预览。'}</p><label>补做日期<input required aria-label="补做日期" type="date" min={props.data.today} value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></label><label>时间段<select aria-label="补做时段" value={draft.slot} onChange={e => setDraft({ ...draft, slot: e.target.value as Slot })}>{slots.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}</select></label><div className={s.timeFields}><label>开始<input aria-label="补做开始时间" type="time" value={draft.startTime} onChange={e => setDraft({ ...draft, startTime: e.target.value })} /></label><label>结束<input aria-label="补做结束时间" type="time" value={draft.endTime} onChange={e => setDraft({ ...draft, endTime: e.target.value })} /></label></div>
+  </EditorFrame>{preview && <Modal title="确认重新安排" onClose={closePreview}><p className={s.modalIntro}>原日期 {plan.scheduledOn} 的计划与进展保留，新日期为 {preview.request.date}。</p>{preview.result.target ? <div className={s.snapshotPreview}><b>复用目标日已有安排</b><p>{preview.result.target.title}</p><p>{preview.result.target.scheduledOn} · {slots.find(s => s.id === preview.result.target?.slot)?.label} · {preview.result.target.startTime ?? '时间自由'}{preview.result.target.endTime ? `–${preview.result.target.endTime}` : ''}</p><p>保留目标安排的原时间和已有进展，不用当前表单的时间覆盖；不创建第二条同日普通安排。</p></div> : <p>为同一任务创建新的普通安排，不复制任务实体。</p>}<div className={s.exitActions}><button className={s.primaryButton} disabled={props.busy} onClick={() => void commitOrdinary()}>确认重新安排</button><button className={s.secondaryButton} onClick={closePreview}>返回修改</button></div></Modal>}</>;
 }

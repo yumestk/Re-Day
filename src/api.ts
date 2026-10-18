@@ -92,6 +92,13 @@ export function errorMessage(error: unknown): string {
 
 // The only IPC boundary: components deal with task intentions, never SQL or paths.
 export const api = {
+  loadDate: (date: string) => invoke<DateView>('load_date', { date }),
+  loadCalendar: (month: string) => invoke<MonthView>('load_calendar', { month }),
+  reviewPrompt: () => invoke<ReviewState | null>('load_review_prompt'),
+  saveReview: (datasetId: string, date: string, action: 'reviewed' | 'dismiss') => invoke<boolean>('save_review', { request: { datasetId, date, action } }),
+  skipPlan: (datasetId: string, item: TaskItem) => invoke<boolean>('skip_plan', { request: { datasetId, planId: item.planId, expectedRevision: item.revision, expectedQuestRevision: item.questRevision } }),
+  previewReschedule: (request: RescheduleRequest) => invoke<ReschedulePreview>('preview_ordinary_reschedule', { request }),
+  rescheduleOrdinary: (request: RescheduleRequest, fingerprint: string) => invoke<MutationResult>('reschedule_ordinary', { request: { request, fingerprint } }),
   previewRule: (request: RuleRequest) => invoke<RulePreview>('preview_recurrence', { request }),
   saveRule: (request: RuleRequest, fingerprint: string) => invoke<boolean>('save_recurrence', { request: { request, fingerprint } }),
   instances: (datasetId: string, questId: string, date: string) => invoke<TaskItem[]>('load_instances', { datasetId, questId, date }),
@@ -122,3 +129,11 @@ export const api = {
   savePreferences: (datasetId: string, preferences: Preferences) =>
     invoke<Preferences>('save_preferences', { request: { datasetId, ...preferences } }),
 };
+
+export interface ReviewState { date: string; reviewedAt: string | null; dismissedOn: string | null }
+export interface DaySummary { date: string; plans: number; completed: number; progressed: number; unexecuted: number; lifeEvents: number; reviewed: boolean }
+export interface PlanReview { item: TaskItem; result: 'completed' | 'progressed' | 'unexecuted' | 'planned'; canManage: boolean; destinationOn: string | null }
+export interface DateView { datasetId: string; date: string; today: string; plans: PlanReview[]; records: Execution[]; activities: { key: string; result: 'completed' | 'progressed'; records: Execution[] }[]; events: { id: string; title: string; note: string; isMilestone: boolean }[]; review: ReviewState; summary: DaySummary }
+export interface MonthView { month: string; days: DaySummary[] }
+export interface RescheduleRequest { datasetId: string; planId: string; makeupId: string; expectedRevision: number; expectedQuestRevision: number; date: string; slot: Slot; startTime: string | null; endTime: string | null }
+export interface ReschedulePreview { target: TaskItem | null; fingerprint: string }

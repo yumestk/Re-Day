@@ -312,3 +312,37 @@
 .instanceChoices button:hover { border-color: #64c7f1; background: #1a3b5d; }
 .instanceChoices span, .instanceChoices small { display: block; color: #789cbd; font-size: 10px; line-height: 1.9; }
 .instanceChoices b { display: block; font-size: 13px; font-weight: 550; margin: 8px 0; }
+
+.calendarPage { display: grid; gap: 26px; padding-bottom: 38px; }
+.month { border: 1px solid #294361; padding: 18px; background: #0c1525; }
+.monthHeading { display: flex; align-items: center; gap: 18px; margin-bottom: 20px; }
+.monthHeading h2 { font: 700 24px var(--font-mono, monospace); margin: 0; }
+.monthHeading .todayButton { margin-left: auto; }
+.monthGrid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 5px; }
+.weekday { font-size: 11px; color: #809bbb; padding: 5px; }
+.monthDay { min-height: 88px; text-align: left; padding: 10px; border: 1px solid #233751; background: #101c2f; display: flex; flex-direction: column; gap: 5px; color: #91a9c7; }
+.monthDay b { font-size: 19px; color: #e3edff; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px; }
+.monthDay small { font-size: 8px; color: var(--cyan); }
+.monthDay span,.monthDay em { font-size: 10px; font-style: normal; }
+.monthDay em { color: #8ed9ff; }
+.monthToday { border-top: 3px solid var(--cyan); }
+.monthSelected { background: #173d71; border-color: #53bbff; }
+.dayTotals { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.dayTotals > div { border-left: 3px solid #347ad2; padding: 12px 18px; background: #10213a; display: grid; gap: 8px; }
+.dayTotals b { font-size: 28px; color: #d5efff; }.dayTotals span { font-size: 11px; color: #93accb; }
+.reviewSection { display: grid; gap: 15px; }.reviewSection h3 { margin: 4px 0; font-size: 17px; }
+.reviewPlan { border: 1px solid #29405f; background: #0d182a; padding: 20px; display: grid; gap: 15px; }
+.planTitle { font-size: 17px; color: #edf4ff; text-align: left; display: flex; gap: 12px; padding: 0; }
+.reviewPlan p { color: #849ebd; font-size: 11px; line-height: 1.7; }
+.reviewPlan small { font-size: 11px; color: #9db6d4; margin-left: 10px; line-height: 1.8; }
+.resultPill { display: inline-block; padding: 4px 7px; background: #173454; color: #83cfff; font-size: 10px; }
+.reviewFinish { border-top: 1px solid #29405f; padding: 24px 0; display: grid; gap: 12px; }.reviewFinish p { color: #839cbc; font-size: 12px; }
+.reviewPrompt { border: 1px solid #2d5d90; background: #102b47; display: flex; align-items: center; gap: 16px; padding: 14px 18px; margin-bottom: 24px; }
+.reviewPrompt div { flex: 1; display: grid; gap: 6px; }.reviewPrompt b { font-size: 12px; }.reviewPrompt span,.reviewPrompt button { font-size: 11px; color: #a6c5e4; }
+.planAct button { color: #b1d7ff; font-size: 10px; letter-spacing: 1px; }
+.eventSummary { padding: 18px; border: 1px solid #29405f; }.eventSummary p { color: #9cb0c8; }
+.calendarPage > .collectionHeading input[type="date"] { color-scheme: dark; background: #102139; color: #c9ddf6; border: 1px solid #365778; border-radius: 3px; padding: 8px 10px; font-size: 12px; }
+.month { overflow-x: auto; }.monthGrid { min-width: 490px; }
+.reviewPrompt button { appearance: none; background: #16385b; border: 1px solid #37648d; color: #c8e5ff; padding: 7px 10px; border-radius: 3px; }
+.planAct button { appearance: none; background: #123554; border: 1px solid #326895; padding: 5px 8px; border-radius: 2px; }
+.planTitle { appearance: none; background: transparent; border: 0; }

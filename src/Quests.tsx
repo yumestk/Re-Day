@@ -40,7 +40,7 @@ export function RecordList({ records, onQuest }: { records: Execution[]; onQuest
   return <div className={s.recordList}>{records.map(record => <article key={record.id} data-record-title={record.snapshot.title} className={record.revokedAt ? s.revokedRecord : ''}><div><b>{record.kind === 'progress' ? '有进展' : record.revokedAt ? '已撤销完成' : '已完成'}</b><span>{record.occurredOn}</span></div><h4>{onQuest ? <button type="button" onClick={() => onQuest(record.questId)}>{record.snapshot.title}</button> : record.snapshot.title}</h4>{record.note && <p>{record.note}</p>}<small>{record.snapshot.goals.map(g => g.name).join(' / ') || '无目标归属'} · {record.planId ? '关联原计划' : '无预先计划'}<br />录入于 {new Date(record.recordedAt).toLocaleString('zh-CN')}{record.revokedAt && ` · 撤销于 ${new Date(record.revokedAt).toLocaleString('zh-CN')}`}</small></article>)}</div>;
 }
 
-export function QuestEditor({ quest, plan, initialParent, onQuest, onCreateChild, onExecution, onSchedule, onDelete, onRule, onInstances, onReschedule, ...props }: EditorProps & { quest: Quest | null; plan?: TaskItem; initialParent?: string; onQuest: (id: string) => void; onCreateChild: (id: string) => void; onExecution: (kind: 'progress' | 'completion' | 'undo') => void; onSchedule: () => void; onDelete: () => void; onRule: () => void; onInstances: () => void; onReschedule: () => void }) {
+export function QuestEditor({ quest, plan, initialParent, onQuest, onCreateChild, onExecution, onSchedule, onDelete, onRule, onInstances, onReschedule, onSkip, ...props }: EditorProps & { quest: Quest | null; plan?: TaskItem; initialParent?: string; onQuest: (id: string) => void; onCreateChild: (id: string) => void; onExecution: (kind: 'progress' | 'completion' | 'undo') => void; onSchedule: () => void; onDelete: () => void; onRule: () => void; onInstances: () => void; onReschedule: () => void; onSkip: () => void }) {
   const [draft, setDraft] = useState<QuestDraft>(() => ({ title: quest?.mode === 'recurring' && plan ? plan.title : quest?.title ?? '', description: quest?.mode === 'recurring' && plan ? plan.description : quest?.description ?? '', parentId: quest?.parentId ?? initialParent ?? null, goalIds: quest?.mode === 'recurring' && plan ? plan.goals.map(g => g.id) : quest?.goalIds ?? [] }));
   const [time, setTime] = useState(() => ({ slot: plan?.slot ?? 'morning', startTime: plan?.startTime ?? '', endTime: plan?.endTime ?? '' }));
   const original = useRef(JSON.stringify({ draft, time }));
@@ -65,16 +65,16 @@ export function QuestEditor({ quest, plan, initialParent, onQuest, onCreateChild
     if (!await props.run(quest.id, () => api.questState(props.data.datasetId, quest, action))) return;
     await props.onChanged(); props.onClose();
   };
-  const timeReadOnly = !!plan && (quest?.status !== 'open' || plan.scheduledOn < props.data.today);
+  const timeReadOnly = !!plan && (quest?.status !== 'open' || plan.scheduledOn < props.data.today || plan.disposition !== 'active' || !plan.canExecute);
   const after = quest && <div className={s.questContext}>
     {recurring && <RuleSummary quest={quest} today={props.data.today} />}
     <div className={s.contextActions}>
       {recurring && !plan ? <button type="button" disabled={!actionable} onClick={onInstances}>选择已有实例</button> : <>
-      <button type="button" disabled={!actionable || quest.status !== 'open' || (recurring ? !plan?.canExecute || plan.completed : !!quest.archivedOn)} onClick={() => onExecution('progress')}>记录进展</button>
-      {(recurring ? plan?.completed : quest.status === 'completed') ? <button type="button" disabled={!actionable || (recurring && plan?.disposition !== 'active')} onClick={() => onExecution('undo')}>{recurring ? '撤销本次完成' : '撤销任务完成'}</button> : <button type="button" disabled={!actionable || quest.status !== 'open' || (recurring ? !plan?.canExecute : !!quest.archivedOn)} onClick={() => onExecution('completion')}>{recurring ? '完成本次实例' : '完成整个任务'}</button>}
+      <button type="button" disabled={!actionable || quest.status !== 'open' || (!!plan && !plan.canExecute) || (recurring ? !plan?.canExecute || plan.completed : !!quest.archivedOn)} onClick={() => onExecution('progress')}>记录进展</button>
+      {(recurring ? plan?.completed : quest.status === 'completed') ? <button type="button" disabled={!actionable || (!!plan && plan.disposition !== 'active')} onClick={() => onExecution('undo')}>{recurring ? '撤销本次完成' : '撤销任务完成'}</button> : <button type="button" disabled={!actionable || quest.status !== 'open' || (!!plan && !plan.canExecute) || (recurring ? !plan?.canExecute : !!quest.archivedOn)} onClick={() => onExecution('completion')}>{recurring ? '完成本次实例' : '完成整个任务'}</button>}
       </>}
       <button type="button" disabled={!actionable || (!recurring && (quest.status !== 'open' || !!quest.archivedOn))} onClick={recurring ? onInstances : onSchedule}>{recurring ? '查看已有实例' : '添加日期安排'}</button>
-      {recurring && plan && <button type="button" disabled={!actionable || !plan.canExecute || plan.completed} onClick={onReschedule}>顺延或重新安排本次</button>}
+      {plan && <><button type="button" disabled={!actionable || !plan.canExecute || plan.completed} onClick={onReschedule}>顺延或重新安排本次</button><button type="button" disabled={!actionable || !plan.canExecute || plan.completed} onClick={onSkip}>放弃本次计划</button></>}
       <button type="button" disabled={!actionable || quest.status !== 'open' || !!quest.archivedOn || props.data.quests.some(q => q.parentId === quest.id)} onClick={onRule}>{recurring ? '编辑本次及未来' : '设置重复规则'}</button>
     </div>
     {!recurring && quest.status === 'completed' && <p className={s.formHint}>启用重复前，请先明确撤销任务完成；原完成记录会保留。</p>}
@@ -94,8 +94,8 @@ export function QuestEditor({ quest, plan, initialParent, onQuest, onCreateChild
   </EditorFrame>;
 }
 
-export function ExecutionEditor({ quest, plan, kind, ...props }: EditorProps & { quest: Quest; plan?: TaskItem; kind: 'progress' | 'completion' | 'undo' }) {
-  const [date, setDate] = useState(props.data.today);
+export function ExecutionEditor({ quest, plan, kind, initialDate, ...props }: EditorProps & { quest: Quest; plan?: TaskItem; initialDate?: string; kind: 'progress' | 'completion' | 'undo' }) {
+  const [date, setDate] = useState(initialDate ?? props.data.today);
   const [note, setNote] = useState('');
   const [confirm, setConfirm] = useState(false);
   const id = useRef(crypto.randomUUID());
@@ -115,8 +115,8 @@ export function ExecutionEditor({ quest, plan, kind, ...props }: EditorProps & {
   </EditorFrame>;
 }
 
-export function ScheduleEditor({ quest, ...props }: EditorProps & { quest: Quest }) {
-  const [draft, setDraft] = useState({ date: props.data.today, slot: 'morning' as Slot, startTime: '', endTime: '' });
+export function ScheduleEditor({ quest, initialDate, ...props }: EditorProps & { quest: Quest; initialDate?: string }) {
+  const [draft, setDraft] = useState({ date: initialDate ?? props.data.today, slot: 'morning' as Slot, startTime: '', endTime: '' });
   const original = useRef(JSON.stringify(draft));
   const id = useRef(crypto.randomUUID());
   const base = useRef(quest);
@@ -125,7 +125,7 @@ export function ScheduleEditor({ quest, ...props }: EditorProps & { quest: Quest
     if (!result) return false; await props.onChanged(); return true;
   };
   return <EditorFrame {...props} title="添加日期安排" dirty={original.current !== JSON.stringify(draft)} onSave={save}>
-    <p className={s.executionTitle}>{quest.title}</p><label>安排日期<input required min={props.data.today} type="date" aria-label="安排日期" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></label><label>时间段<select aria-label="时间段" value={draft.slot} onChange={e => setDraft({ ...draft, slot: e.target.value as Slot })}>{slots.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select></label><div className={s.timeFields}><label>开始<input type="time" aria-label="开始时间" value={draft.startTime} onChange={e => setDraft({ ...draft, startTime: e.target.value })} /></label><label>结束<input type="time" aria-label="结束时间" value={draft.endTime} onChange={e => setDraft({ ...draft, endTime: e.target.value })} /></label></div><p className={s.formHint}>为同一任务添加计划，保留已有日期与执行历史。时间仅用于展示和规划。</p>
+    <p className={s.executionTitle}>{quest.title}</p><label>安排日期<input required type="date" aria-label="安排日期" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></label><label>时间段<select aria-label="时间段" value={draft.slot} onChange={e => setDraft({ ...draft, slot: e.target.value as Slot })}>{slots.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select></label><div className={s.timeFields}><label>开始<input type="time" aria-label="开始时间" value={draft.startTime} onChange={e => setDraft({ ...draft, startTime: e.target.value })} /></label><label>结束<input type="time" aria-label="结束时间" value={draft.endTime} onChange={e => setDraft({ ...draft, endTime: e.target.value })} /></label></div><p className={s.formHint}>为同一任务添加计划，保留已有日期与执行历史。时间仅用于展示和规划。过去日期的安排属于补录，不能替代执行事实。</p>
   </EditorFrame>;
 }
 

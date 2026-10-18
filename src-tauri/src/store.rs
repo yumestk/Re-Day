@@ -1,5 +1,7 @@
+mod calendar;
 mod quests;
 mod recurrence;
+pub use calendar::*;
 use chrono::{NaiveDate, NaiveTime};
 pub use quests::*;
 pub use recurrence::*;
@@ -465,7 +467,7 @@ impl Store {
             draft.parent_id.as_deref(),
             &draft.goal_ids,
         )?;
-        if (old.completed || old.scheduled_on.as_str() < today)
+        if (old.completed || old.scheduled_on.as_str() < today || old.disposition != "active")
             && (draft.slot != old.slot
                 || draft.start_time != old.start_time
                 || draft.end_time != old.end_time)
@@ -484,7 +486,7 @@ impl Store {
                 AND scheduled_on>=?3 AND disposition='active' AND origin='manual' AND NOT EXISTS(SELECT 1 FROM execution_records e WHERE e.plan_id=plans.id)",
                 params![snapshot, old.quest_id, today],
             )?;
-            tx.execute("UPDATE plans SET slot=?1,start_time=?2,end_time=?3,revision=revision+1 WHERE id=?4 AND scheduled_on>=?5",
+            tx.execute("UPDATE plans SET slot=?1,start_time=?2,end_time=?3,revision=revision+1 WHERE id=?4 AND scheduled_on>=?5 AND disposition='active'",
                 params![draft.slot, draft.start_time, draft.end_time, old.plan_id, today])?;
         }
         let item = query_item(&tx, &old.plan_id)?;

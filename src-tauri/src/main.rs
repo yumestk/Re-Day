@@ -160,6 +160,47 @@ async fn reschedule_instance(
     .await
 }
 
+#[tauri::command]
+async fn load_calendar(state: State<'_, AppState>, month: String) -> store::Result<MonthView> {
+    with_store(state, move |s| s.load_calendar(&month, &today())).await
+}
+#[tauri::command]
+async fn load_date(state: State<'_, AppState>, date: String) -> store::Result<DateView> {
+    with_store(state, move |s| s.load_date(&date, &today())).await
+}
+#[tauri::command]
+async fn load_review_prompt(state: State<'_, AppState>) -> store::Result<Option<ReviewState>> {
+    with_store(state, |s| s.review_prompt(&today())).await
+}
+#[tauri::command]
+async fn save_review(state: State<'_, AppState>, request: ReviewRequest) -> store::Result<bool> {
+    with_store(state, move |s| s.save_review(request, &today(), &now())).await
+}
+#[tauri::command]
+async fn skip_plan(state: State<'_, AppState>, request: SkipRequest) -> store::Result<bool> {
+    with_store(state, move |s| s.skip_plan(request)).await
+}
+#[tauri::command]
+async fn preview_ordinary_reschedule(
+    state: State<'_, AppState>,
+    request: RescheduleRequest,
+) -> store::Result<ReschedulePreview> {
+    with_store(state, move |s| {
+        s.preview_ordinary_reschedule(request, &today())
+    })
+    .await
+}
+#[tauri::command]
+async fn reschedule_ordinary(
+    state: State<'_, AppState>,
+    request: OrdinaryReschedule,
+) -> store::Result<MutationResult> {
+    with_store(state, move |s| {
+        s.reschedule_ordinary(request, &today(), &now())
+    })
+    .await
+}
+
 fn main() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "desktop-test")]
@@ -201,7 +242,14 @@ fn main() {
             preview_recurrence,
             save_recurrence,
             load_instances,
-            reschedule_instance
+            reschedule_instance,
+            load_calendar,
+            load_date,
+            load_review_prompt,
+            save_review,
+            skip_plan,
+            preview_ordinary_reschedule,
+            reschedule_ordinary
         ])
         .build(tauri::generate_context!())
         .expect("LifeIsRPG could not open its local data. Existing files were preserved.")

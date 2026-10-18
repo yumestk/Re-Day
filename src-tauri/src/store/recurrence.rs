@@ -55,7 +55,7 @@ pub struct PlanChange {
     pub title: String,
     pub action: String,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RescheduleRequest {
     pub dataset_id: String,
