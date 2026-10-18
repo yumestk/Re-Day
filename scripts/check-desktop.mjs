@@ -1,5 +1,6 @@
 // Actual macOS WKWebView + Rust + SQLite. Requires the Vite server on :1420.
 import assert from 'node:assert/strict';
+import { checkRecurrence } from './check-recurrence.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -42,8 +43,8 @@ async function fill(selector, text) {
 }
 const text = () => execute('return document.body.innerText');
 async function has(value) { return (await text()).includes(value); }
-async function screenshot(name) {
-  await execute('window.scrollTo(0,0)');
+async function screenshot(name, selector) {
+  await execute('if(arguments[0])document.querySelector(arguments[0]).scrollIntoView({block:"center"});else window.scrollTo(0,0)', selector ?? null);
   await delay(450);
   await writeFile(join(output, `${name}.png`), Buffer.from(await request(`/session/${session}/screenshot`), 'base64'));
 }
@@ -288,6 +289,7 @@ try {
   assert.equal(await sql("SELECT status FROM goals WHERE name='准备日常可用版本';"), 'completed');
   assert.equal(await sql('PRAGMA integrity_check;'), 'ok');
   log('phase-two metadata and promoted hierarchy survive restart');
+  await checkRecurrence({ click, fill, execute, until, sql, has, screenshot, clickText, openQuest, saveForm, stop, start, log });
   await clickText('Today今日行动');
   await until(() => has('今日安排'), 'return Today');
   // Exercise keyboard and native close-request handling, without adding a test-only product command.

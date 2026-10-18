@@ -126,6 +126,40 @@ async fn delete_quest(state: State<'_, AppState>, request: DeleteRequest) -> sto
     with_store(state, move |s| s.delete_quest(request)).await
 }
 
+#[tauri::command]
+async fn preview_recurrence(
+    state: State<'_, AppState>,
+    request: RuleRequest,
+) -> store::Result<RulePreview> {
+    with_store(state, move |s| s.preview_rule(request, &today())).await
+}
+#[tauri::command]
+async fn save_recurrence(
+    state: State<'_, AppState>,
+    request: CommitRuleRequest,
+) -> store::Result<bool> {
+    with_store(state, move |s| s.save_rule(request, &today())).await
+}
+#[tauri::command]
+async fn load_instances(
+    state: State<'_, AppState>,
+    dataset_id: String,
+    quest_id: String,
+    date: String,
+) -> store::Result<Vec<TaskItem>> {
+    with_store(state, move |s| s.instances(&dataset_id, &quest_id, &date)).await
+}
+#[tauri::command]
+async fn reschedule_instance(
+    state: State<'_, AppState>,
+    request: RescheduleRequest,
+) -> store::Result<MutationResult> {
+    with_store(state, move |s| {
+        s.reschedule_instance(request, &today(), &now())
+    })
+    .await
+}
+
 fn main() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "desktop-test")]
@@ -163,7 +197,11 @@ fn main() {
             load_quest_history,
             schedule_quest,
             preview_quest_delete,
-            delete_quest
+            delete_quest,
+            preview_recurrence,
+            save_recurrence,
+            load_instances,
+            reschedule_instance
         ])
         .build(tauri::generate_context!())
         .expect("LifeIsRPG could not open its local data. Existing files were preserved.")

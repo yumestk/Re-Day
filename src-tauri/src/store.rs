@@ -1,6 +1,8 @@
 mod quests;
+mod recurrence;
 use chrono::{NaiveDate, NaiveTime};
 pub use quests::*;
+pub use recurrence::*;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::Path};
@@ -66,6 +68,14 @@ pub struct ContentSnapshot {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskItem {
+    pub task_mode: String,
+    pub origin: String,
+    pub occurrence_on: Option<String>,
+    pub disposition: String,
+    pub next_plan_id: Option<String>,
+    pub is_override: bool,
+    pub has_records: bool,
+    pub source_on: Option<String>,
     pub goals: Vec<serde_json::Value>,
     pub can_execute: bool,
     pub plan_id: String,
@@ -100,7 +110,7 @@ pub struct MutationResult {
     pub item: TaskItem,
     pub changed: bool,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDraft {
     pub goal_ids: Vec<String>,
@@ -219,17 +229,33 @@ fn json<T: Serialize>(value: &T) -> Result<String> {
 }
 
 const ITEM_QUERY: &str = "SELECT p.id, p.quest_id, p.content_snapshot, p.scheduled_on,
-    p.slot, p.start_time, p.end_time, p.position, q.status = 'completed',
-    e.occurred_on, e.id, p.revision, q.revision, q.title, q.description, (q.status IN ('open','completed') AND q.archived_on IS NULL AND p.disposition='active')
+    p.slot, p.start_time, p.end_time, p.position,
+    CASE WHEN p.origin='manual' THEN q.status='completed' ELSE e.id IS NOT NULL END,
+    e.occurred_on, e.id, p.revision, q.revision, q.title, q.description,
+    (p.disposition='active' AND q.status IN ('open','completed') AND
+      ((q.mode='single' AND q.archived_on IS NULL) OR
+       (q.mode='recurring' AND p.origin IN ('recurring','makeup') AND (q.archived_on IS NULL OR p.origin='makeup')))),
+    q.mode,p.origin,p.occurrence_on,p.disposition,p.next_plan_id,p.is_override,
+    EXISTS(SELECT 1 FROM execution_records facts WHERE facts.plan_id=p.id),
+    (SELECT source.scheduled_on FROM plans source WHERE source.next_plan_id=p.id LIMIT 1)
     FROM plans p JOIN quests q ON q.id = p.quest_id
-    LEFT JOIN execution_records e ON e.quest_id = q.id AND e.kind = 'completion'
-      AND e.completion_scope = 'quest' AND e.revoked_at IS NULL";
+    LEFT JOIN execution_records e ON e.quest_id=q.id AND e.kind='completion' AND e.revoked_at IS NULL
+      AND ((p.origin='manual' AND e.completion_scope='quest') OR
+        (p.origin IN ('recurring','makeup') AND e.completion_scope='instance' AND e.plan_id=p.id))";
 fn item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskItem> {
     let raw: String = row.get(2)?;
     let snapshot: ContentSnapshot = serde_json::from_str(&raw).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
     })?;
     Ok(TaskItem {
+        task_mode: row.get(16)?,
+        origin: row.get(17)?,
+        occurrence_on: row.get(18)?,
+        disposition: row.get(19)?,
+        next_plan_id: row.get(20)?,
+        is_override: row.get(21)?,
+        has_records: row.get(22)?,
+        source_on: row.get(23)?,
         plan_id: row.get(0)?,
         quest_id: row.get(1)?,
         title: snapshot.title,
@@ -327,22 +353,27 @@ impl Store {
         preferences.revision = revision;
         Ok(preferences)
     }
-    pub fn load_day(&self, date: &str, today: &str) -> Result<DayView> {
+    pub fn load_day(&mut self, date: &str, today: &str) -> Result<DayView> {
         validate_date(date)?;
-        let mut statement = self.conn.prepare(&format!(
-            "{ITEM_QUERY} WHERE p.scheduled_on = ?1
-            AND p.disposition <> 'withdrawn' AND (p.scheduled_on < ?2 OR (q.archived_on IS NULL AND q.status<>'cancelled')) ORDER BY p.position, p.id"
-        ))?;
-        let items = statement
-            .query_map([date, today], item_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let preferences = self.preferences()?;
+        let dataset_id = self.dataset_id.clone();
+        let tx = self.conn.transaction()?;
+        recurrence::ensure_range(&tx, date, date)?;
+        let items = {
+            let mut statement = tx.prepare(&format!("{ITEM_QUERY} WHERE p.scheduled_on=?1
+              AND p.disposition<>'withdrawn' AND (p.scheduled_on<?2 OR (q.archived_on IS NULL AND q.status<>'cancelled') OR p.origin='makeup') ORDER BY p.position,p.id"))?;
+            let rows = statement.query_map([date, today], item_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let records = quests::execution_rows(&tx, "occurred_on", date)?;
+        tx.commit()?;
         Ok(DayView {
-            records: self.day_records(date)?,
-            dataset_id: self.dataset_id.clone(),
-            date: date.to_owned(),
-            today: today.to_owned(),
+            records,
+            dataset_id,
+            date: date.into(),
+            today: today.into(),
             items,
-            preferences: self.preferences()?,
+            preferences,
         })
     }
     pub fn create(&mut self, request: CreateRequest, now: &str) -> Result<MutationResult> {
@@ -412,6 +443,9 @@ impl Store {
         })
     }
     pub fn edit(&mut self, request: EditRequest, today: &str) -> Result<MutationResult> {
+        if query_item(&self.conn, &request.plan_id)?.task_mode == "recurring" {
+            return self.edit_instance(request, today);
+        }
         self.check_dataset(&request.dataset_id)?;
         validate_draft(&request.draft)?;
         let tx = self.conn.transaction()?;

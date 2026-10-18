@@ -5,7 +5,9 @@ import { api, errorMessage, slots, type DayView, type Preferences, type Slot, ty
 import { muteAudio, playCue, preloadSounds, primeAudio } from './feedback';
 import s from './App.module.css';
 import { Icon, Modal } from './ui';
-import { Quests, QuestEditor, GoalEditor, ExecutionEditor, ScheduleEditor, RecordList, DeleteDialog, QuestLinks } from './Quests';
+import { QuestLinks } from './editors';
+import { RecurrenceEditor, InstancePicker, RescheduleEditor } from './Recurrence';
+import { Quests, QuestEditor, GoalEditor, ExecutionEditor, ScheduleEditor, RecordList, DeleteDialog } from './Quests';
 
 function localDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -17,7 +19,7 @@ function shiftDate(date: string, days: number) {
 }
 function shortDate(date: string) { return date.slice(5).replace('-', '.'); }
 
-type Editor = { kind: 'create'; slot: Slot } | { kind: 'edit'; planId: string } | { kind: 'quest'; questId?: string; parentId?: string } | { kind: 'goal'; goal: Goal | null } | { kind: 'execution'; questId: string; planId?: string; operation: 'progress' | 'completion' | 'undo' } | { kind: 'schedule'; questId: string };
+type Editor = { kind: 'create'; slot: Slot } | { kind: 'edit'; planId: string; selectedPlan?: TaskItem } | { kind: 'quest'; questId?: string; parentId?: string } | { kind: 'goal'; goal: Goal | null } | { kind: 'execution'; questId: string; planId?: string; selectedPlan?: TaskItem; operation: 'progress' | 'completion' | 'undo' } | { kind: 'schedule'; questId: string } | { kind: 'rule'; questId: string; from?: string } | { kind: 'instances'; questId: string } | { kind: 'reschedule'; questId: string; selectedPlan: TaskItem };
 
 export default function App() {
   const [date, setDate] = useState(localDate);
@@ -125,7 +127,7 @@ export default function App() {
   async function complete(item: TaskItem, button: HTMLButtonElement | null) {
     if (!day) return;
     const desired = !item.completed;
-    const result = await mutate(item.questId, () => api.setCompletion(day.datasetId, item, desired, crypto.randomUUID()));
+    const result = await mutate(item.taskMode === 'recurring' ? item.planId : item.questId, () => api.setCompletion(day.datasetId, item, desired, crypto.randomUUID()));
     if (!result) return;
     applyItem(result.item);
     void load(date, false);
@@ -153,9 +155,9 @@ export default function App() {
   }
   async function move(item: TaskItem, slot: Slot) {
     if (!day) return;
-    const result = await mutate(item.questId, () => api.editQuest(day.datasetId, item, {
-      goalIds: workspace?.quests.find(q => q.id === item.questId)?.goalIds ?? [], parentId: workspace?.quests.find(q => q.id === item.questId)?.parentId ?? null,
-      title: item.currentTitle, description: item.currentDescription, date: item.scheduledOn,
+    const result = await mutate(item.taskMode === 'recurring' ? item.planId : item.questId, () => api.editQuest(day.datasetId, item, {
+      goalIds: item.taskMode === 'recurring' ? item.goals.map(g => g.id) : workspace?.quests.find(q => q.id === item.questId)?.goalIds ?? [], parentId: workspace?.quests.find(q => q.id === item.questId)?.parentId ?? null,
+      title: item.taskMode === 'recurring' ? item.title : item.currentTitle, description: item.taskMode === 'recurring' ? item.description : item.currentDescription, date: item.scheduledOn,
       slot, startTime: item.startTime, endTime: item.endTime,
     }));
     if (result) { applyItem(result.item); void load(date, false); }
@@ -215,7 +217,7 @@ export default function App() {
   const completed = items.filter(item => item.completed).length;
   const selectedDate = new Date(`${date}T12:00:00`);
   const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(selectedDate).toUpperCase();
-  const currentItem = editor?.kind === 'edit' || editor?.kind === 'execution' ? items.find(item => item.planId === editor.planId) : undefined;
+  const currentItem = editor && 'selectedPlan' in editor && editor.selectedPlan ? editor.selectedPlan : editor?.kind === 'edit' || editor?.kind === 'execution' ? items.find(item => item.planId === editor.planId) : undefined;
   const currentQuestId = currentItem?.questId ?? (editor && 'questId' in editor ? editor.questId : undefined);
   const currentQuest = workspace?.quests.find(q => q.id === currentQuestId);
   const editorProps = workspace ? { data: workspace, run: mutate, busy: pending.size > 0, onChanged: changed, onClose: () => { setEditor(null); setDirty(false); }, onDirty: setDirty, saveRef: saveEditorRef } : null;
@@ -263,7 +265,7 @@ export default function App() {
             const all = items.filter(item => item.slot === slot.id);
             const visible = all.filter(item => !hideCompleted || !item.completed);
             return <section key={slot.id} className={s.group} aria-label={`${slot.label}任务`}><div className={s.groupHeader}><div className={s.groupName}><span className={s.slotIcon}><Icon name={slot.id === 'morning' ? 'sun' : slot.id === 'afternoon' ? 'sunset' : 'moon'} size={20} /></span><h3>{slot.label}<small>{slot.english}</small></h3><span className={s.groupRule} /></div><span className={s.groupCount}>{all.length} 项</span><button className={s.addSlot} aria-label={`添加${slot.label}任务`} onClick={() => openEditor({ kind: 'create', slot: slot.id })}><Icon name="plus" size={18} /></button></div>
-              <div className={s.taskList}>{visible.map((item, index) => <TaskRow key={item.planId} item={item} index={index} selected={editor?.kind === 'edit' && editor.planId === item.planId} busy={pending.has(item.questId) || (dirty && editor?.kind === 'edit' && editor.planId === item.planId)} today={visibleDay.today} progressed={visibleDay.records.some(record => record.questId === item.questId && record.kind === 'progress' && !record.revokedAt)} onProgress={() => openEditor({ kind: 'execution', questId: item.questId, planId: item.planId, operation: 'progress' })} onComplete={complete} onSelect={() => openEditor({ kind: 'edit', planId: item.planId })} onMove={move} />)}
+              <div className={s.taskList}>{visible.map((item, index) => <TaskRow key={item.planId} item={item} index={index} selected={editor?.kind === 'edit' && editor.planId === item.planId} busy={pending.has(item.taskMode === 'recurring' ? item.planId : item.questId) || (dirty && editor?.kind === 'edit' && editor.planId === item.planId)} today={visibleDay.today} progressed={visibleDay.records.some(record => record.questId === item.questId && (item.taskMode !== 'recurring' || record.planId === item.planId) && record.kind === 'progress' && !record.revokedAt)} onProgress={() => openEditor({ kind: 'execution', questId: item.questId, planId: item.planId, operation: 'progress' })} onComplete={complete} onSelect={() => openEditor({ kind: 'edit', planId: item.planId })} onMove={move} />)}
                 {!visible.length && <button className={s.emptySlot} onClick={() => openEditor({ kind: 'create', slot: slot.id })}><span className={s.emptyDiamond}><Icon name="plus" size={14} /></span><span>{all.length && hideCompleted ? `${all.length} 项已完成已隐藏` : `添加${slot.label}的安排`}<small>{all.length && hideCompleted ? '关闭「隐藏已完成」即可查看' : '留给一件你想推进的事'}</small></span><Icon name="arrow" size={17} /></button>}
               </div></section>;
           })}</div>
@@ -276,10 +278,13 @@ export default function App() {
     </main>
 
     {editor?.kind === 'create' && visibleDay && workspace && <TaskEditor key={`new-${editor.slot}`} workspace={workspace} initialDate={date} initialSlot={editor.slot} today={visibleDay.today} busy={pending.has('create')} onSave={saveTask} onClose={() => { setEditor(null); setDirty(false); }} onDirty={setDirty} saveRef={saveEditorRef} />}
-    {editorProps && editor && (editor.kind === 'edit' || editor.kind === 'quest') && (editor.kind === 'quest' || currentQuest) && <QuestEditor key={currentQuest?.id ?? `quest-new-${editor.kind === 'quest' ? editor.parentId ?? '' : ''}`} {...editorProps} quest={currentQuest ?? null} plan={editor.kind === 'edit' ? currentItem : undefined} initialParent={editor.kind === 'quest' ? editor.parentId : undefined} onQuest={questId => openEditor({ kind: 'quest', questId })} onCreateChild={parentId => openEditor({ kind: 'quest', parentId })} onExecution={operation => currentQuest && openEditor({ kind: 'execution', questId: currentQuest.id, planId: editor.kind === 'edit' ? currentItem?.planId : undefined, operation })} onSchedule={() => currentQuest && openEditor({ kind: 'schedule', questId: currentQuest.id })} onDelete={() => currentQuest && void previewDelete(currentQuest.id)} />}
+    {editorProps && editor && (editor.kind === 'edit' || editor.kind === 'quest') && (editor.kind === 'quest' || currentQuest) && <QuestEditor key={currentItem?.planId ?? currentQuest?.id ?? `quest-new-${editor.kind === 'quest' ? editor.parentId ?? '' : ''}`} {...editorProps} quest={currentQuest ?? null} plan={editor.kind === 'edit' ? currentItem : undefined} initialParent={editor.kind === 'quest' ? editor.parentId : undefined} onQuest={questId => openEditor({ kind: 'quest', questId })} onCreateChild={parentId => openEditor({ kind: 'quest', parentId })} onExecution={operation => currentQuest && openEditor({ kind: 'execution', questId: currentQuest.id, planId: editor.kind === 'edit' ? currentItem?.planId : undefined, selectedPlan: currentItem, operation })} onSchedule={() => currentQuest && openEditor({ kind: 'schedule', questId: currentQuest.id })} onDelete={() => currentQuest && void previewDelete(currentQuest.id)} onRule={() => currentQuest && openEditor({ kind: 'rule', questId: currentQuest.id, from: currentItem?.scheduledOn })} onInstances={() => currentQuest && openEditor({ kind: 'instances', questId: currentQuest.id })} onReschedule={() => currentQuest && currentItem && openEditor({ kind: 'reschedule', questId: currentQuest.id, selectedPlan: currentItem })} />}
     {editorProps && editor?.kind === 'goal' && <GoalEditor key={editor.goal?.id ?? 'goal-new'} {...editorProps} run={(_key, op) => mutate(editor.goal?.id ?? 'goal-new', op)} goal={editor.goal} />}
     {editorProps && editor?.kind === 'execution' && currentQuest && <ExecutionEditor key={`execution-${currentQuest.id}-${editor.operation}`} {...editorProps} quest={currentQuest} plan={currentItem} kind={editor.operation} />}
     {editorProps && editor?.kind === 'schedule' && currentQuest && <ScheduleEditor key={`schedule-${currentQuest.id}`} {...editorProps} quest={currentQuest} />}
+    {editorProps && editor?.kind === 'rule' && currentQuest && <RecurrenceEditor key={`rule-${currentQuest.id}`} {...editorProps} quest={currentQuest} initialDate={editor.from} />}
+    {editorProps && editor?.kind === 'instances' && currentQuest && <InstancePicker key={`instances-${currentQuest.id}`} {...editorProps} quest={currentQuest} onSelect={plan => openEditor({ kind: 'edit', planId: plan.planId, selectedPlan: plan })} />}
+    {editorProps && editor?.kind === 'reschedule' && currentQuest && currentItem && <RescheduleEditor key={`reschedule-${currentItem.planId}`} {...editorProps} quest={currentQuest} plan={currentItem} />}
     {deletion && <DeleteDialog preview={deletion} busy={pending.has(deletion.questId)} onClose={closeDelete} onDelete={confirmed => void deleteQuest(confirmed)} />}
     {notice && <div className={s.notice} role="status"><Icon name="spark" size={16} /><span>{notice}</span></div>}
     {showPreferences && preferences && <Modal title="声音与动效" onClose={closePreferences}><p className={s.modalIntro}>给每次行动，一点恰到好处的反馈。</p><div className={s.preferenceRows}>
@@ -296,10 +301,10 @@ function TaskRow({ item, index, selected, busy, today, progressed, onProgress, o
   onSelect: () => void; onMove: (item: TaskItem, slot: Slot) => Promise<void>;
 }) {
   const button = useRef<HTMLButtonElement>(null);
-  return <article className={`${s.task} ${item.completed ? s.completed : ''} ${selected ? s.selectedTask : ''}`} data-task-title={item.title} data-plan-id={item.planId} aria-busy={busy}>
+  return <article className={`${s.task} ${item.completed ? s.completed : ''} ${selected ? s.selectedTask : ''}`} data-origin={item.origin} data-disposition={item.disposition} data-task-title={item.title} data-plan-id={item.planId} aria-busy={busy}>
     <button ref={button} className={s.completeButton} aria-label={`${item.completed ? '撤销完成' : '完成任务'}：${item.title}`} aria-pressed={item.completed} disabled={busy || !item.canExecute} onClick={() => void onComplete(item, button.current)}><span>{busy ? <span className={s.spinner} /> : item.completed ? <Icon name="check" size={20} /> : <span className={s.checkDot} />}</span></button>
-    <button className={s.taskContent} onClick={onSelect}><span className={s.taskTopLine}><span className={s.taskTitle}>{item.title}</span>{item.completed ? <span className={s.doneLabel}>已完成</span> : progressed ? <span className={s.doneLabel}>有进展</span> : null}</span><span className={s.taskMeta}>{item.startTime ? `${item.startTime}${item.endTime ? ` – ${item.endTime}` : ''}` : '时间自由'}<i />{item.goals.map(g => g.name).join(' / ') || '无目标归属'}{item.completedOn && item.completedOn !== item.scheduledOn && <><i />于 {shortDate(item.completedOn)} 完成</>}</span></button>
-    {!item.completed && item.scheduledOn >= today && <select className={s.moveSelect} aria-label={`调整「${item.title}」时段`} value={item.slot} disabled={busy} onChange={event => void onMove(item, event.target.value as Slot)}>{slots.map(slot => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select>}
+    <button className={s.taskContent} onClick={onSelect}><span className={s.taskTopLine}><span className={s.taskTitle}>{item.title}</span>{item.completed ? <span className={s.doneLabel}>已完成</span> : progressed ? <span className={s.doneLabel}>有进展</span> : null}</span><span className={s.taskMeta}>{item.startTime ? `${item.startTime}${item.endTime ? ` – ${item.endTime}` : ''}` : '时间自由'}<i />{item.origin === 'makeup' ? `补做 · 来自 ${shortDate(item.sourceOn ?? item.occurrenceOn ?? item.scheduledOn)}` : item.origin === 'recurring' ? '正常重复' : item.taskMode === 'recurring' ? '原普通安排' : '普通任务'}{item.isOverride ? ' · 单次覆盖' : ''}{item.disposition === 'rescheduled' ? ' · 已顺延' : ''}<i />{item.goals.map(g => g.name).join(' / ') || '无目标归属'}{item.completedOn && item.completedOn !== item.scheduledOn && <><i />于 {shortDate(item.completedOn)} 完成</>}</span></button>
+    {!item.completed && item.canExecute && item.scheduledOn >= today && (item.taskMode !== 'recurring' || !item.hasRecords) && <select className={s.moveSelect} aria-label={`调整「${item.title}」时段`} value={item.slot} disabled={busy} onChange={event => void onMove(item, event.target.value as Slot)}>{slots.map(slot => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select>}
     {!item.completed && <button className={s.progressButton} aria-label={`记录进展：${item.title}`} disabled={busy || !item.canExecute} onClick={onProgress}>进展</button>}
     <span className={s.rowNumber}>{String(index + 1).padStart(2, '0')}</span><button className={s.taskMore} onClick={onSelect} aria-label={`查看「${item.title}」详情`}><Icon name="chevron" size={17} /></button>
   </article>;

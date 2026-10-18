@@ -242,7 +242,7 @@ fn dates_slots_completion_and_preferences_survive_reopening() {
         })
         .unwrap();
     drop(store);
-    let reopened = Store::open(&root).unwrap();
+    let mut reopened = Store::open(&root).unwrap();
     let day = reopened.load_day(DATE, "2026-10-19").unwrap();
     assert_eq!(day.dataset_id, dataset);
     assert_eq!(day.items[0].slot, "afternoon");

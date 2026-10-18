@@ -23,6 +23,10 @@
     "allow-load-quest-history",
     "allow-schedule-quest",
     "allow-preview-quest-delete",
-    "allow-delete-quest"
+    "allow-delete-quest",
+    "allow-preview-recurrence",
+    "allow-save-recurrence",
+    "allow-load-instances",
+    "allow-reschedule-instance"
   ]
 }

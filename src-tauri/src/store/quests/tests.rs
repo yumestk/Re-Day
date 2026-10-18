@@ -89,7 +89,7 @@ fn backfill_uses_confirmed_current_context_preserves_snapshot_and_progress_on_un
             NOW,
         )
         .unwrap();
-    let events = s.day_records("2026-10-16").unwrap();
+    let events = s.load_day("2026-10-16", TODAY).unwrap().records;
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].snapshot.title, "原任务");
     assert_eq!(events[0].snapshot.goals[0]["name"], "原目标");
@@ -106,7 +106,7 @@ fn backfill_uses_confirmed_current_context_preserves_snapshot_and_progress_on_un
     let done = quest(&s.conn, &q.id).unwrap();
     s.record_execution(record(&s, &done, "undo", TODAY), TODAY, NOW)
         .unwrap();
-    assert_eq!(s.day_records("2026-10-16").unwrap().len(), 1);
+    assert_eq!(s.load_day("2026-10-16", TODAY).unwrap().records.len(), 1);
 }
 #[test]
 fn parent_goal_and_child_completion_are_independent_and_cycles_rejected() {
@@ -187,7 +187,7 @@ fn delete_rechecks_preview_promotes_children_and_really_removes_history() {
         quest(&s.conn, &child.id).unwrap().parent_id,
         Some(parent.id.clone())
     );
-    assert_eq!(s.day_records(TODAY).unwrap().len(), 1);
+    assert_eq!(s.load_day(TODAY, TODAY).unwrap().records.len(), 1);
     s.conn.execute_batch("DROP TRIGGER fail_delete;").unwrap();
     s.delete_quest(DeleteRequest {
         dataset_id: s.dataset_id.clone(),
@@ -197,7 +197,7 @@ fn delete_rechecks_preview_promotes_children_and_really_removes_history() {
     .unwrap();
     assert!(quest(&s.conn, &parent.id).is_err());
     assert!(quest(&s.conn, &child.id).unwrap().parent_id.is_none());
-    assert!(s.day_records(TODAY).unwrap().is_empty());
+    assert!(s.load_day(TODAY, TODAY).unwrap().records.is_empty());
 }
 #[test]
 fn archive_hides_active_tasks_but_retains_historical_facts() {
@@ -216,7 +216,7 @@ fn archive_hides_active_tasks_but_retains_historical_facts() {
         TODAY,
     )
     .unwrap();
-    assert_eq!(s.day_records("2026-10-16").unwrap().len(), 1);
+    assert_eq!(s.load_day("2026-10-16", TODAY).unwrap().records.len(), 1);
     assert!(s.workspace(TODAY).unwrap().quests[0].archived_on.is_some());
 }
 
@@ -247,7 +247,7 @@ fn goal_rename_rejects_stale_context_and_preserves_prior_execution_snapshot() {
         "CONFLICT"
     );
     assert_eq!(
-        s.day_records(TODAY).unwrap()[0].snapshot.goals[0]["name"],
+        s.load_day(TODAY, TODAY).unwrap().records[0].snapshot.goals[0]["name"],
         "旧目标名"
     );
     assert_eq!(quest(&s.conn, &q.id).unwrap().status, "open");

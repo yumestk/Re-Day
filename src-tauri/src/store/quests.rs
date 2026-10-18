@@ -21,6 +21,7 @@ pub struct SaveGoalRequest {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quest {
+    pub recurrence: Vec<RuleVersion>,
     pub id: String,
     pub title: String,
     pub description: String,
@@ -92,6 +93,7 @@ pub struct Execution {
     pub note: Option<String>,
     pub snapshot: ContentSnapshot,
     pub revoked_at: Option<String>,
+    pub completion_scope: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +109,9 @@ pub struct HistoricalPlan {
     pub slot: String,
     pub title: String,
     pub disposition: String,
+    pub origin: String,
+    pub occurrence_on: Option<String>,
+    pub next_plan_id: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +183,7 @@ fn quest_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Quest> {
         completion_id: r.get(8)?,
         completed_on: r.get(9)?,
         goal_ids: vec![],
+        recurrence: vec![],
     })
 }
 pub(super) fn quest(conn: &Connection, id: &str) -> Result<Quest> {
@@ -187,7 +193,13 @@ pub(super) fn quest(conn: &Connection, id: &str) -> Result<Quest> {
     q.goal_ids = stmt
         .query_map([id], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    q.recurrence = recurrence::rule_versions(conn, id)?;
     Ok(q)
+}
+pub(super) fn snapshot_goals(conn: &Connection, ids: &[String]) -> Result<Vec<serde_json::Value>> {
+    let mut ids = ids.to_vec();
+    ids.sort();
+    ids.iter().map(|id|Ok(conn.query_row("SELECT id,name,kind FROM goals WHERE id=?1",[id],|r|Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"kind":r.get::<_,String>(2)?})))?)).collect()
 }
 pub(super) fn current_snapshot(conn: &Connection, id: &str) -> Result<ContentSnapshot> {
     let q = quest(conn, id)?;
@@ -246,9 +258,13 @@ fn refresh_open_plans(conn: &Connection, id: &str, today: &str) -> Result<()> {
     conn.execute("UPDATE plans SET content_snapshot=?1,revision=revision+1 WHERE quest_id=?2 AND scheduled_on>=?3 AND disposition='active' AND origin='manual' AND NOT EXISTS(SELECT 1 FROM execution_records e WHERE e.plan_id=plans.id) AND EXISTS(SELECT 1 FROM quests q WHERE q.id=?2 AND q.status='open')",params![snapshot,id,today])?;
     Ok(())
 }
-fn execution_rows(conn: &Connection, column: &str, value: &str) -> Result<Vec<Execution>> {
+pub(super) fn execution_rows(
+    conn: &Connection,
+    column: &str,
+    value: &str,
+) -> Result<Vec<Execution>> {
     // column is a fixed internal selector, never supplied by the frontend.
-    let mut stmt=conn.prepare(&format!("SELECT id,quest_id,plan_id,kind,occurred_on,recorded_at,note,content_snapshot,revoked_at FROM execution_records WHERE {column}=?1 ORDER BY occurred_on DESC,recorded_at DESC,id"))?;
+    let mut stmt=conn.prepare(&format!("SELECT id,quest_id,plan_id,kind,occurred_on,recorded_at,note,content_snapshot,revoked_at,completion_scope FROM execution_records WHERE {column}=?1 ORDER BY occurred_on DESC,recorded_at DESC,id"))?;
     let raw = stmt.query_map([value], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -260,11 +276,22 @@ fn execution_rows(conn: &Connection, column: &str, value: &str) -> Result<Vec<Ex
             r.get::<_, Option<String>>(6)?,
             r.get::<_, String>(7)?,
             r.get::<_, Option<String>>(8)?,
+            r.get::<_, Option<String>>(9)?,
         ))
     })?;
     raw.map(|row| {
-        let (id, quest_id, plan_id, kind, occurred_on, recorded_at, note, snapshot, revoked_at) =
-            row?;
+        let (
+            id,
+            quest_id,
+            plan_id,
+            kind,
+            occurred_on,
+            recorded_at,
+            note,
+            snapshot,
+            revoked_at,
+            completion_scope,
+        ) = row?;
         Ok(Execution {
             id,
             quest_id,
@@ -275,6 +302,7 @@ fn execution_rows(conn: &Connection, column: &str, value: &str) -> Result<Vec<Ex
             note,
             snapshot: read_json(&snapshot)?,
             revoked_at,
+            completion_scope,
         })
     })
     .collect()
@@ -462,8 +490,8 @@ impl Store {
         if q.revision != request.expected_revision {
             return Err(conflict());
         }
-        if q.mode != "single" {
-            return Err(validation("重复任务的状态操作在重复规则阶段提供。"));
+        if q.mode == "recurring" && ["archive", "cancel"].contains(&request.action.as_str()) {
+            recurrence::stop_future(&tx, &q.id, today)?;
         }
         match request.action.as_str() {
             "archive" => {
@@ -521,99 +549,136 @@ impl Store {
         }
         let tx = self.conn.transaction()?;
         let q = quest(&tx, &request.quest_id)?;
+        let item = request
+            .plan_id
+            .as_deref()
+            .map(|id| query_item(&tx, id))
+            .transpose()?;
+        if item.as_ref().is_some_and(|p| p.quest_id != q.id) {
+            return Err(conflict());
+        }
+        let recurring = q.mode == "recurring";
+        if recurring
+            && item
+                .as_ref()
+                .is_none_or(|p| !["recurring", "makeup"].contains(&p.origin.as_str()))
+        {
+            return Err(validation(
+                "重复任务必须选择已有的正常实例或补做安排，不能新增无实例执行。",
+            ));
+        }
+        let scope = if recurring { "instance" } else { "quest" };
+        let completion_id = if recurring {
+            item.as_ref().and_then(|p| p.completion_id.clone())
+        } else {
+            q.completion_id.clone()
+        };
+        let old_records = execution_rows(&tx, "quest_id", &q.id)?;
         if request.kind != "undo" {
-            if let Some(old) = execution_rows(&tx, "quest_id", &q.id)?
-                .into_iter()
-                .find(|r| r.id == request.record_id)
-            {
+            if let Some(old) = old_records.iter().find(|r| r.id == request.record_id) {
                 if old.plan_id != request.plan_id
                     || old.kind != request.kind
                     || old.occurred_on != request.occurred_on
                     || old.note.as_deref() != Some(request.note.as_str())
+                    || (request.kind == "completion"
+                        && old.completion_scope.as_deref() != Some(scope))
                 {
                     return Err(conflict());
                 }
                 return Ok(false);
             }
-            if request.kind == "completion" && q.status == "completed" {
+            if request.kind == "completion" && completion_id.is_some() {
                 return Ok(false);
             }
         } else {
-            let Some(id) = &request.completion_id else {
-                return Err(validation("请选择要撤销的完成记录。"));
-            };
-            let old = execution_rows(&tx, "quest_id", &q.id)?
-                .into_iter()
-                .find(|r| &r.id == id && r.kind == "completion")
+            let id = request
+                .completion_id
+                .as_ref()
+                .ok_or_else(|| validation("请选择要撤销的完成记录。"))?;
+            let old = old_records
+                .iter()
+                .find(|r| {
+                    &r.id == id
+                        && r.kind == "completion"
+                        && r.completion_scope.as_deref() == Some(scope)
+                })
                 .ok_or_else(conflict)?;
+            if recurring && old.plan_id != request.plan_id {
+                return Err(conflict());
+            }
             if old.revoked_at.is_some() {
                 return Ok(false);
             }
-            if q.completion_id.as_ref() != Some(id) {
+            if completion_id.as_ref() != Some(id) {
                 return Err(conflict());
             }
         }
         if q.revision != request.expected_revision {
             return Err(conflict());
         }
-        if q.mode != "single" {
-            return Err(validation("重复任务必须选择已有的正常实例或补做安排。"));
-        }
-        if request.kind != "undo" && (q.status != "open" || q.archived_on.is_some()) {
-            return Err(validation("请先恢复为活跃的未完成任务，再记录执行。"));
-        }
-        let snapshot = if let Some(plan) = &request.plan_id {
-            let item = query_item(&tx, plan)?;
-            if item.quest_id != q.id || request.expected_plan_revision != Some(item.revision) {
+        if let Some(p) = &item {
+            if request.expected_plan_revision != Some(p.revision) {
                 return Err(conflict());
             }
-            let disposition: String =
-                tx.query_row("SELECT disposition FROM plans WHERE id=?1", [plan], |r| {
-                    r.get(0)
-                })?;
-            if disposition != "active" {
-                return Err(validation("此安排已结束处置，不能直接执行。"));
+            if p.disposition != "active" {
+                return Err(validation("这条安排已结束处置，不能直接执行或撤销。"));
             }
+        }
+        if request.kind != "undo"
+            && (q.status != "open"
+                || (q.archived_on.is_some()
+                    && !(recurring && item.as_ref().is_some_and(|p| p.origin == "makeup")))
+                || completion_id.is_some())
+        {
+            return Err(validation(
+                "请选择可执行的未完成任务或实例。归档重复任务只保留已有补做的执行入口。",
+            ));
+        }
+        let snapshot = if let Some(p) = &item {
             tx.query_row(
                 "SELECT content_snapshot FROM plans WHERE id=?1",
-                [plan],
+                [&p.plan_id],
                 |r| r.get::<_, String>(0),
             )?
         } else {
             json(&current_snapshot(&tx, &q.id)?)?
         };
-        match request.kind.as_str() {
-            "undo" => {
-                tx.execute(
-                    "UPDATE execution_records SET revoked_at=?1 WHERE id=?2",
-                    params![now, request.completion_id],
-                )?;
-            }
-            _ => {
-                tx.execute("INSERT INTO execution_records(id,quest_id,plan_id,kind,completion_scope,occurred_on,recorded_at,note,content_snapshot) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![request.record_id,q.id,request.plan_id,request.kind,if request.kind=="completion"{Some("quest")}else{None},request.occurred_on,now,request.note,snapshot])?;
-            }
+        if request.kind == "undo" {
+            tx.execute(
+                "UPDATE execution_records SET revoked_at=?1 WHERE id=?2",
+                params![now, request.completion_id],
+            )?;
+        } else {
+            tx.execute("INSERT INTO execution_records(id,quest_id,plan_id,kind,completion_scope,occurred_on,recorded_at,note,content_snapshot) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![request.record_id,q.id,request.plan_id,request.kind,if request.kind=="completion"{Some(scope)}else{None},request.occurred_on,now,request.note,snapshot])?;
         }
-        tx.execute(
-            "UPDATE quests SET status=?1,revision=revision+1 WHERE id=?2",
-            params![
-                if request.kind == "completion" {
-                    "completed"
-                } else {
-                    "open"
-                },
-                q.id
-            ],
-        )?;
-        tx.execute(
-            "UPDATE plans SET revision=revision+1 WHERE quest_id=?1",
-            [&q.id],
-        )?;
+        if recurring {
+            tx.execute(
+                "UPDATE plans SET revision=revision+1 WHERE id=?1",
+                [&request.plan_id],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE quests SET status=?1,revision=revision+1 WHERE id=?2",
+                params![
+                    if request.kind == "completion" {
+                        "completed"
+                    } else {
+                        "open"
+                    },
+                    q.id
+                ],
+            )?;
+            tx.execute(
+                "UPDATE plans SET revision=revision+1 WHERE quest_id=?1",
+                [&q.id],
+            )?;
+        }
         tx.commit()?;
         Ok(true)
     }
     pub fn history(&self, id: &str) -> Result<QuestHistory> {
         quest(&self.conn, id)?;
-        let mut stmt=self.conn.prepare("SELECT id,scheduled_on,slot,content_snapshot,disposition FROM plans WHERE quest_id=?1 ORDER BY scheduled_on DESC,position")?;
+        let mut stmt=self.conn.prepare("SELECT id,scheduled_on,slot,content_snapshot,disposition,origin,occurrence_on,next_plan_id FROM plans WHERE quest_id=?1 ORDER BY scheduled_on DESC,position")?;
         let raw = stmt.query_map([id], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -621,17 +686,24 @@ impl Store {
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
             ))
         })?;
         let plans = raw
             .map(|row| {
-                let (id, date, slot, snapshot, disposition) = row?;
+                let (id, date, slot, snapshot, disposition, origin, occurrence_on, next_plan_id) =
+                    row?;
                 Ok(HistoricalPlan {
                     id,
                     date,
                     slot,
                     title: read_json::<ContentSnapshot>(&snapshot)?.title,
                     disposition,
+                    origin,
+                    occurrence_on,
+                    next_plan_id,
                 })
             })
             .collect::<Result<_>>()?;
@@ -639,10 +711,6 @@ impl Store {
             records: execution_rows(&self.conn, "quest_id", id)?,
             plans,
         })
-    }
-    pub fn day_records(&self, date: &str) -> Result<Vec<Execution>> {
-        validate_date(date)?;
-        execution_rows(&self.conn, "occurred_on", date)
     }
     pub fn schedule(
         &mut self,
