@@ -205,3 +205,89 @@
   .hero { padding-left: 23px; padding-right: 23px; }
   .heroSmall { font-size: 7px; }
 }
+
+/* Phase two: the collection and forms reuse the Today palette and drawer. */
+.inactiveNav { display: flex; align-items: center; gap: 12px; padding: 14px 17px; min-height: 62px; border: 0; background: transparent; color: #89a1c2; text-align: left; }
+.inactiveNav:hover { background: #16263e; color: #e6f3ff; }
+.inactiveNav > span:nth-child(2) { font-size: 17px; font-weight: 650; }
+.inactiveNav small { display: block; font-size: 10px; margin-top: 4px; font-weight: 400; }
+.inactiveNav .navDot { visibility: hidden; }
+.activeNav + .inactiveNav, .inactiveNav + .activeNav { margin-top: 5px; }
+.formBody { display: flex; flex-direction: column; gap: 22px; padding: 0; margin: 0; border: 0; min-width: 0; }
+.formBody > label, .editorForm > label { color: #a4bad5; font-size: 11px; }
+.editorForm select, .questFilters select { display: block; width: 100%; color: #d3e5fb; background: #0c182a; border: 1px solid #2c415e; padding: 11px 9px; border-radius: 3px; margin-top: 9px; font-size: 11px; color-scheme: dark; }
+.editorForm input[type='checkbox'] { accent-color: var(--blue); width: 14px; height: 14px; }
+.checkLabel { display: flex; align-items: flex-start; gap: 9px; color: #aec2db; font-size: 11px; line-height: 1.8; }
+.checkLabel input { margin-top: 3px; flex-shrink: 0; }
+.goalChoices { border: 1px solid #29405e; padding: 12px; display: flex; flex-direction: column; gap: 11px; margin: 0; }
+.goalChoices legend { color: #9fb7d5; font-size: 11px; padding: 0 5px; }
+.goalChoices legend span { font-size: 9px; color: #6786ab; }
+.goalChoices label { display: flex; gap: 9px; font-size: 11px; color: #acc4e2; }
+.goalChoices small { display: block; color: #617e9f; font-size: 9px; margin-top: 3px; }
+.goalChoices input { margin: 0; }
+.questPage { padding-bottom: 45px; }
+.collectionHero { border-bottom: 1px solid #345378; padding: 10px 0 24px; }
+.collectionHero h1 { font: italic 900 clamp(62px,7vw,92px)/1 Impact, 'Arial Narrow', sans-serif; letter-spacing: -1px; margin: 12px 0 10px; }
+.collectionHero h1 span { color: var(--cyan); }
+.collectionHero p { color: #93accb; font-size: 12px; }
+.collectionHeading { display: flex; align-items: center; gap: 12px; margin: 27px 0 16px; }
+.collectionHeading h2 { font-size: 18px; font-weight: 600; margin: 0 auto 0 0; }
+.collectionHeading small { font-size: 10px; color: #6e8db1; font-weight: 400; }
+.collectionHeading button { white-space: nowrap; }
+.goalCards { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 12px; }
+.goalCard { text-align: left; color: #cddff4; background: linear-gradient(125deg,#152c4c,#101a2b); border: 1px solid #2c4b72; border-top: 2px solid #3b90ec; padding: 19px; min-width: 0; }
+.goalCard:hover { border-color: #65bcf5; background: #1a3558; }
+.goalCard > span { color: #689acb; letter-spacing: 1.7px; font-size: 8px; }
+.goalCard h3 { font-size: 16px; overflow-wrap: anywhere; margin: 14px 0 8px; }
+.goalCard p { color: #839ebf; font-size: 10px; line-height: 1.8; margin-bottom: 18px; }
+.goalCard small { color: #73b4dd; font-size: 9px; }
+.collectionEmpty { color: #748ca9; font-size: 11px; padding: 30px 20px; border: 1px dashed #2a3e59; line-height: 1.9; }
+.questFilters { display: flex; gap: 9px; margin-bottom: 15px; }
+.questFilters input { flex: 1; min-width: 80px; color: #c8d9ee; background: #0b1627; border: 1px solid #2a3c58; padding: 10px; border-radius: 3px; font-size: 11px; }
+.questFilters select { width: 125px; margin: 0; }
+.questRows { display: flex; flex-direction: column; gap: 7px; }
+.questRow { display: flex; align-items: center; gap: 13px; padding: 16px; text-align: left; background: #121f32; color: #d5e5f9; border: 1px solid #293d59; min-width: 0; }
+.questRow:hover, .questRowSelected { border-color: #52b9e8; background: #183553; }
+.questStateIcon { color: #62cef0; font-size: 20px; }
+.questRow > span:nth-child(2) { flex: 1; min-width: 0; }
+.questRow b { font-weight: 550; font-size: 13px; overflow-wrap: anywhere; }
+.questRow small { display: block; color: #758fb0; font-size: 9px; margin-top: 7px; }
+.questRow em { font-size: 9px; font-style: normal; color: #72a5c9; white-space: nowrap; }
+.questRow > svg { color: #5f82a9; flex-shrink: 0; }
+.questContext { border-top: 1px solid #293e5a; padding-top: 23px; padding-bottom: 28px; }
+.questContext h3 { font-size: 13px; font-weight: 550; color: #b3cae5; margin: 23px 0 13px; }
+.contextHeading { display: flex; align-items: center; justify-content: space-between; }
+.contextActions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.contextActions button { color: #b3d6fb; background: #153153; border: 1px solid #356088; padding: 9px 6px; font-size: 10px; }
+.contextActions button:hover { background: #20538a; }
+.contextActions button:disabled, .dangerActions button:disabled { opacity: .4; }
+.childRow { width: 100%; display: flex; gap: 8px; align-items: center; justify-content: space-between; border: 1px solid #293f5e; padding: 11px; background: #0d192b; color: #aec6e3; margin-top: 8px; text-align: left; font-size: 11px; }
+.childRow small { font-size: 9px; color: #6c91b7; white-space: nowrap; }
+.recordList { display: flex; flex-direction: column; gap: 10px; }
+.recordList article { border: 1px solid #29425c; border-left: 2px solid #4098b9; padding: 13px; background: #0c1828; }
+.recordList article > div { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.recordList b { font-size: 10px; font-weight: 550; color: #74c4e0; }
+.recordList span { color: #7692b4; font-size: 9px; }
+.recordList h4 { font-size: 12px; font-weight: 550; margin: 9px 0; color: #ccddf1; overflow-wrap: anywhere; }
+.recordList h4 button { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; text-align: left; }
+.recordList p { font-size: 11px; color: #a2b8d3; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.recordList small { color: #627fa2; font-size: 9px; line-height: 1.8; }
+.recordList .revokedRecord { opacity: .6; border-left-color: #6b7588; }
+.planHistory { font-size: 10px; color: #8fa9c8; margin-top: 18px; line-height: 1.8; }
+.planHistory summary { cursor: pointer; }
+.planHistory p { padding: 8px 10px; border-left: 1px solid #345272; }
+.dangerActions { display: flex; gap: 9px; flex-wrap: wrap; border-top: 1px solid #344154; margin-top: 26px; padding-top: 20px; }
+.dangerActions button { font-size: 9px; color: #b29392; border: 0; background: transparent; padding: 6px 0; }
+.dangerActions button:hover { color: #ffb5a8; }
+.dailyRecords { border-top: 1px solid #2d405a; padding-bottom: 16px; margin-top: 25px; }
+.executionTitle { color: #bfe0ff; font-size: 15px; line-height: 1.7; margin: 0; overflow-wrap: anywhere; }
+.snapshotPreview { border: 1px solid #2a4c70; padding: 13px; color: #a5bfdc; font-size: 11px; line-height: 1.8; }
+.snapshotPreview b { font-size: 10px; color: #689dc9; }
+.snapshotPreview small { color: #7f9bbd; font-size: 10px; }
+.deleteSummary { color: #b99e9d; font-size: 11px; padding-left: 17px; line-height: 1.9; margin-bottom: 20px; }
+.deleteSummary li { margin-bottom: 8px; }
+.dangerButton { color: #ffe9e4; background: #854039; border: 1px solid #bb756b; padding: 11px; font-size: 12px; }
+.dangerButton:disabled { opacity: .4; }
+.progressButton { font-size: 10px; background: transparent; color: #76b8d4; border: 1px solid #30526d; border-radius: 2px; padding: 5px 7px; white-space: nowrap; }
+.progressButton:hover { color: #b5f0ff; background: #1b3e58; }
+.progressButton:disabled { opacity: .4; }

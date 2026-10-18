@@ -16,6 +16,8 @@ fn request(store: &Store) -> CreateRequest {
         quest_id: Uuid::new_v4().to_string(),
         plan_id: Uuid::new_v4().to_string(),
         draft: TaskDraft {
+            goal_ids: vec![],
+            parent_id: None,
             title: "完成技术文档".into(),
             description: "写清楚事务边界".into(),
             date: DATE.into(),
@@ -152,6 +154,8 @@ fn editing_preserves_completed_snapshot_and_stale_edits_are_rejected() {
         .unwrap()
         .item;
     let draft = TaskDraft {
+        goal_ids: vec![],
+        parent_id: None,
         title: "新的任务标题".into(),
         description: "新的说明".into(),
         date: DATE.into(),

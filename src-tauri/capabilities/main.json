@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Only the bundled main window can manage the local daily plan.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -12,6 +14,15 @@
     "allow-create-quest",
     "allow-edit-quest",
     "allow-set-completion",
-    "allow-save-preferences"
+    "allow-save-preferences",
+    "allow-load-workspace",
+    "allow-save-goal",
+    "allow-save-quest",
+    "allow-set-quest-state",
+    "allow-record-execution",
+    "allow-load-quest-history",
+    "allow-schedule-quest",
+    "allow-preview-quest-delete",
+    "allow-delete-quest"
   ]
 }

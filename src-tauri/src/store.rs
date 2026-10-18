@@ -1,4 +1,6 @@
+mod quests;
 use chrono::{NaiveDate, NaiveTime};
+pub use quests::*;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::Path};
@@ -64,6 +66,8 @@ pub struct ContentSnapshot {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskItem {
+    pub goals: Vec<serde_json::Value>,
+    pub can_execute: bool,
     pub plan_id: String,
     pub quest_id: String,
     pub title: String,
@@ -84,6 +88,7 @@ pub struct TaskItem {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DayView {
+    pub records: Vec<Execution>,
     pub dataset_id: String,
     pub date: String,
     pub today: String,
@@ -98,6 +103,8 @@ pub struct MutationResult {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDraft {
+    pub goal_ids: Vec<String>,
+    pub parent_id: Option<String>,
     pub title: String,
     pub description: String,
     pub date: String,
@@ -213,7 +220,7 @@ fn json<T: Serialize>(value: &T) -> Result<String> {
 
 const ITEM_QUERY: &str = "SELECT p.id, p.quest_id, p.content_snapshot, p.scheduled_on,
     p.slot, p.start_time, p.end_time, p.position, q.status = 'completed',
-    e.occurred_on, e.id, p.revision, q.revision, q.title, q.description
+    e.occurred_on, e.id, p.revision, q.revision, q.title, q.description, (q.status IN ('open','completed') AND q.archived_on IS NULL AND p.disposition='active')
     FROM plans p JOIN quests q ON q.id = p.quest_id
     LEFT JOIN execution_records e ON e.quest_id = q.id AND e.kind = 'completion'
       AND e.completion_scope = 'quest' AND e.revoked_at IS NULL";
@@ -226,6 +233,8 @@ fn item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskItem> {
         plan_id: row.get(0)?,
         quest_id: row.get(1)?,
         title: snapshot.title,
+        goals: snapshot.goals,
+        can_execute: row.get(15)?,
         description: snapshot.description,
         scheduled_on: row.get(3)?,
         slot: row.get(4)?,
@@ -322,12 +331,13 @@ impl Store {
         validate_date(date)?;
         let mut statement = self.conn.prepare(&format!(
             "{ITEM_QUERY} WHERE p.scheduled_on = ?1
-            AND p.disposition <> 'withdrawn' ORDER BY p.position, p.id"
+            AND p.disposition <> 'withdrawn' AND (p.scheduled_on < ?2 OR (q.archived_on IS NULL AND q.status<>'cancelled')) ORDER BY p.position, p.id"
         ))?;
         let items = statement
-            .query_map([date], item_row)?
+            .query_map([date, today], item_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(DayView {
+            records: self.day_records(date)?,
             dataset_id: self.dataset_id.clone(),
             date: date.to_owned(),
             today: today.to_owned(),
@@ -341,6 +351,12 @@ impl Store {
         validate_id(&request.plan_id)?;
         validate_draft(&request.draft)?;
         let tx = self.conn.transaction()?;
+        quests::validate_links(
+            &tx,
+            &request.quest_id,
+            request.draft.parent_id.as_deref(),
+            &request.draft.goal_ids,
+        )?;
         if let Some(existing) = tx
             .query_row(
                 &format!("{ITEM_QUERY} WHERE p.id=?1"),
@@ -349,7 +365,14 @@ impl Store {
             )
             .optional()?
         {
-            if existing.quest_id != request.quest_id
+            let existing_quest = quests::quest(&tx, &existing.quest_id)?;
+            if existing_quest.parent_id != request.draft.parent_id
+                || existing_quest
+                    .goal_ids
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    != request.draft.goal_ids.iter().collect()
+                || existing.quest_id != request.quest_id
                 || existing.current_title != request.draft.title.trim()
                 || existing.current_description != request.draft.description
                 || existing.scheduled_on != request.draft.date
@@ -365,15 +388,19 @@ impl Store {
             });
         }
         let draft = request.draft;
-        let snapshot = json(&ContentSnapshot {
-            title: draft.title.trim().to_owned(),
-            description: draft.description.clone(),
-            goals: vec![],
-        })?;
+
         tx.execute(
-            "INSERT INTO quests(id,title,description,created_at) VALUES (?1,?2,?3,?4)",
-            params![request.quest_id, draft.title.trim(), draft.description, now],
+            "INSERT INTO quests(id,title,description,created_at,parent_id) VALUES (?1,?2,?3,?4,?5)",
+            params![
+                request.quest_id,
+                draft.title.trim(),
+                draft.description,
+                now,
+                draft.parent_id
+            ],
         )?;
+        quests::replace_links(&tx, &request.quest_id, &draft.goal_ids)?;
+        let snapshot = json(&quests::current_snapshot(&tx, &request.quest_id)?)?;
         tx.execute("INSERT INTO plans(id,quest_id,scheduled_on,slot,start_time,end_time,content_snapshot,position,created_at)
             VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(position),0)+1 FROM plans WHERE scheduled_on=?3),?8)",
             params![request.plan_id, request.quest_id, draft.date, draft.slot, draft.start_time, draft.end_time, snapshot, now])?;
@@ -398,6 +425,12 @@ impl Store {
             return Err(AppError::new("VALIDATION", "修改的日期需与原安排一致。"));
         }
         let draft = request.draft;
+        quests::validate_links(
+            &tx,
+            &old.quest_id,
+            draft.parent_id.as_deref(),
+            &draft.goal_ids,
+        )?;
         if (old.completed || old.scheduled_on.as_str() < today)
             && (draft.slot != old.slot
                 || draft.start_time != old.start_time
@@ -408,40 +441,16 @@ impl Store {
                 "已完成或过去的安排保留原时间，不能在此改写。",
             ));
         }
-        if draft.title.trim() == old.current_title
-            && draft.description == old.current_description
-            && draft.slot == old.slot
-            && draft.start_time == old.start_time
-            && draft.end_time == old.end_time
-        {
-            return Ok(MutationResult {
-                item: old,
-                changed: false,
-            });
-        }
-        tx.execute(
-            "UPDATE quests SET title=?1,description=?2,revision=revision+1 WHERE id=?3",
-            params![draft.title.trim(), draft.description, old.quest_id],
-        )?;
-        let goals = {
-            let mut stmt = tx.prepare("SELECT g.id,g.name,g.kind FROM goals g JOIN quest_goals qg ON qg.goal_id=g.id WHERE qg.quest_id=?1 ORDER BY g.id")?;
-            let rows = stmt.query_map([&old.quest_id], |r| Ok(serde_json::json!({
-                "id": r.get::<_,String>(0)?, "name": r.get::<_,String>(1)?, "kind": r.get::<_,String>(2)?
-            })))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        let snapshot = json(&ContentSnapshot {
-            title: draft.title.trim().to_owned(),
-            description: draft.description,
-            goals,
-        })?;
+        tx.execute("UPDATE quests SET title=?1,description=?2,parent_id=?3,revision=revision+1 WHERE id=?4", params![draft.title.trim(), draft.description, draft.parent_id, old.quest_id])?;
+        quests::replace_links(&tx, &old.quest_id, &draft.goal_ids)?;
+        let snapshot = json(&quests::current_snapshot(&tx, &old.quest_id)?)?;
         if !old.completed {
             tx.execute(
                 "UPDATE plans SET content_snapshot=?1,revision=revision+1 WHERE quest_id=?2
-                AND scheduled_on>=?3 AND disposition='active' AND origin='manual'",
+                AND scheduled_on>=?3 AND disposition='active' AND origin='manual' AND NOT EXISTS(SELECT 1 FROM execution_records e WHERE e.plan_id=plans.id)",
                 params![snapshot, old.quest_id, today],
             )?;
-            tx.execute("UPDATE plans SET slot=?1,start_time=?2,end_time=?3 WHERE id=?4 AND scheduled_on>=?5",
+            tx.execute("UPDATE plans SET slot=?1,start_time=?2,end_time=?3,revision=revision+1 WHERE id=?4 AND scheduled_on>=?5",
                 params![draft.slot, draft.start_time, draft.end_time, old.plan_id, today])?;
         }
         let item = query_item(&tx, &old.plan_id)?;
@@ -458,104 +467,31 @@ impl Store {
         now: &str,
     ) -> Result<MutationResult> {
         self.check_dataset(&request.dataset_id)?;
-        validate_id(&request.record_id)?;
-        validate_date(today)?;
-        let tx = self.conn.transaction()?;
-        let old = query_item(&tx, &request.plan_id)?;
-        if request.desired_completed {
-            if let Some((quest_id, plan_id)) = tx
-                .query_row(
-                    "SELECT quest_id,plan_id FROM execution_records WHERE id=?1",
-                    [&request.record_id],
-                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
-                )
-                .optional()?
-            {
-                if quest_id != old.quest_id || plan_id.as_deref() != Some(old.plan_id.as_str()) {
-                    return Err(conflict());
-                }
-                // A replay must never resurrect a completion that was subsequently revoked.
-                return Ok(MutationResult {
-                    item: old,
-                    changed: false,
-                });
-            }
-            if old.completed {
-                return Ok(MutationResult {
-                    item: old,
-                    changed: false,
-                });
-            }
-        } else if let Some(id) = &request.completion_id {
-            let record: Option<(String, Option<String>)> = tx.query_row(
-                "SELECT quest_id,revoked_at FROM execution_records WHERE id=?1 AND kind='completion' AND completion_scope='quest'",
-                [id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-            match record {
-                Some((quest_id, _)) if quest_id != old.quest_id => return Err(conflict()),
-                Some((_, Some(_))) => {
-                    return Ok(MutationResult {
-                        item: old,
-                        changed: false,
-                    })
-                }
-                None => return Err(conflict()),
-                _ => {}
-            }
-        } else {
-            return Err(AppError::new("VALIDATION", "请明确选择要撤销的完成记录。"));
-        }
-        if old.revision != request.expected_revision
-            || old.quest_revision != request.expected_quest_revision
-        {
-            return Err(conflict());
-        }
-        let (mode, status, disposition): (String,String,String) = tx.query_row(
-            "SELECT q.mode,q.status,p.disposition FROM quests q JOIN plans p ON p.quest_id=q.id WHERE p.id=?1",
-            [&old.plan_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-        if mode != "single" || status == "cancelled" || disposition != "active" {
-            return Err(AppError::new(
-                "CONFLICT",
-                "这条安排当前不能执行，请刷新后重试。",
-            ));
-        }
-        if request.desired_completed {
-            let snapshot: String = tx.query_row(
-                "SELECT content_snapshot FROM plans WHERE id=?1",
-                [&old.plan_id],
-                |r| r.get(0),
-            )?;
-            tx.execute("INSERT INTO execution_records(id,quest_id,plan_id,kind,completion_scope,occurred_on,recorded_at,content_snapshot)
-                VALUES (?1,?2,?3,'completion','quest',?4,?5,?6)",
-                params![request.record_id, old.quest_id, old.plan_id, today, now, snapshot])?;
-        } else {
-            if old.completion_id != request.completion_id {
-                return Err(conflict());
-            }
-            tx.execute(
-                "UPDATE execution_records SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL",
-                params![now, request.completion_id],
-            )?;
-        }
-        tx.execute(
-            "UPDATE quests SET status=?1,revision=revision+1 WHERE id=?2",
-            params![
-                if request.desired_completed {
-                    "completed"
+        let item = query_item(&self.conn, &request.plan_id)?;
+        let changed = self.record_execution(
+            ExecutionRequest {
+                dataset_id: request.dataset_id,
+                quest_id: item.quest_id,
+                plan_id: Some(request.plan_id.clone()),
+                record_id: request.record_id,
+                kind: if request.desired_completed {
+                    "completion"
                 } else {
-                    "open"
-                },
-                old.quest_id
-            ],
+                    "undo"
+                }
+                .into(),
+                occurred_on: today.into(),
+                note: String::new(),
+                expected_revision: request.expected_quest_revision,
+                expected_plan_revision: Some(request.expected_revision),
+                completion_id: request.completion_id,
+            },
+            today,
+            now,
         )?;
-        tx.execute(
-            "UPDATE plans SET revision=revision+1 WHERE quest_id=?1",
-            [&old.quest_id],
-        )?;
-        let item = query_item(&tx, &old.plan_id)?;
-        tx.commit()?;
         Ok(MutationResult {
-            item,
-            changed: true,
+            item: query_item(&self.conn, &request.plan_id)?,
+            changed,
         })
     }
     pub fn save_preferences(&mut self, request: PreferencesRequest) -> Result<Preferences> {

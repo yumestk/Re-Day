@@ -6,6 +6,15 @@ fn main() {
             "edit_quest",
             "set_completion",
             "save_preferences",
+            "load_workspace",
+            "save_goal",
+            "save_quest",
+            "set_quest_state",
+            "record_execution",
+            "load_quest_history",
+            "schedule_quest",
+            "preview_quest_delete",
+            "delete_quest",
         ]),
     ))
     .expect("Tauri build configuration is invalid");

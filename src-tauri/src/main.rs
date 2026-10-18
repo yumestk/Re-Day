@@ -70,6 +70,62 @@ async fn save_preferences(
     with_store(state, move |store| store.save_preferences(request)).await
 }
 
+#[tauri::command]
+async fn load_workspace(state: State<'_, AppState>) -> store::Result<Workspace> {
+    with_store(state, |s| s.workspace(&today())).await
+}
+#[tauri::command]
+async fn save_goal(state: State<'_, AppState>, request: SaveGoalRequest) -> store::Result<Goal> {
+    with_store(state, move |s| s.save_goal(request, &today(), &now())).await
+}
+#[tauri::command]
+async fn save_quest(state: State<'_, AppState>, request: SaveQuestRequest) -> store::Result<Quest> {
+    with_store(state, move |s| s.save_quest(request, &today(), &now())).await
+}
+#[tauri::command]
+async fn set_quest_state(
+    state: State<'_, AppState>,
+    request: QuestStateRequest,
+) -> store::Result<Quest> {
+    with_store(state, move |s| s.quest_state(request, &today())).await
+}
+#[tauri::command]
+async fn record_execution(
+    state: State<'_, AppState>,
+    request: ExecutionRequest,
+) -> store::Result<bool> {
+    with_store(state, move |s| {
+        s.record_execution(request, &today(), &now())
+    })
+    .await
+}
+#[tauri::command]
+async fn load_quest_history(
+    state: State<'_, AppState>,
+    quest_id: String,
+) -> store::Result<QuestHistory> {
+    with_store(state, move |s| s.history(&quest_id)).await
+}
+#[tauri::command]
+async fn schedule_quest(
+    state: State<'_, AppState>,
+    request: ScheduleRequest,
+) -> store::Result<TaskItem> {
+    with_store(state, move |s| s.schedule(request, &today(), &now())).await
+}
+#[tauri::command]
+async fn preview_quest_delete(
+    state: State<'_, AppState>,
+    dataset_id: String,
+    quest_id: String,
+) -> store::Result<DeletePreview> {
+    with_store(state, move |s| s.preview_delete(&dataset_id, &quest_id)).await
+}
+#[tauri::command]
+async fn delete_quest(state: State<'_, AppState>, request: DeleteRequest) -> store::Result<bool> {
+    with_store(state, move |s| s.delete_quest(request)).await
+}
+
 fn main() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "desktop-test")]
@@ -98,7 +154,16 @@ fn main() {
             create_quest,
             edit_quest,
             set_completion,
-            save_preferences
+            save_preferences,
+            load_workspace,
+            save_goal,
+            save_quest,
+            set_quest_state,
+            record_execution,
+            load_quest_history,
+            schedule_quest,
+            preview_quest_delete,
+            delete_quest
         ])
         .build(tauri::generate_context!())
         .expect("LifeIsRPG could not open its local data. Existing files were preserved.")
