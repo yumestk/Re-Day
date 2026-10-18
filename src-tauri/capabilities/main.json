@@ -34,6 +34,18 @@
     "allow-save-review",
     "allow-skip-plan",
     "allow-preview-ordinary-reschedule",
-    "allow-reschedule-ordinary"
+    "allow-reschedule-ordinary",
+    "allow-list-life-events",
+    "allow-load-life-event",
+    "allow-save-life-event",
+    "allow-delete-life-event",
+    "allow-pick-life-event-images",
+    "allow-discard-life-event-images",
+    "allow-load-storage-info",
+    "allow-export-backup",
+    "allow-inspect-backup",
+    "allow-discard-backup",
+    "allow-restore-backup",
+    "allow-retry-storage-cleanup"
   ]
 }

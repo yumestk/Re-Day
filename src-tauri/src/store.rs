@@ -1,8 +1,12 @@
+mod backup;
 mod calendar;
+mod events;
 mod quests;
 mod recurrence;
+pub use backup::*;
 pub use calendar::*;
 use chrono::{NaiveDate, NaiveTime};
+pub use events::*;
 pub use quests::*;
 pub use recurrence::*;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
@@ -170,6 +174,8 @@ struct ActivePointer {
 pub struct Store {
     pub dataset_id: String,
     conn: Connection,
+    root: std::path::PathBuf,
+    blocked: bool,
 }
 
 pub fn validate_date(date: &str) -> Result<()> {
@@ -333,12 +339,29 @@ impl Store {
                 "数据版本与当前应用不符；原数据已保留。",
             ));
         }
-        Ok(Self {
+        let mut store = Self {
             dataset_id: id.to_string(),
             conn,
-        })
+            blocked: false,
+            root: root.to_path_buf(),
+        };
+        store.finish_startup()?;
+        Ok(store)
+    }
+    pub fn ensure_ready(&self) -> Result<()> {
+        if self.blocked {
+            return Err(AppError::new(
+                "IO",
+                "恢复切换未能安全完成，请退出并重开应用；两套数据文件均已保留，当前已停止写入。",
+            ));
+        }
+        Ok(())
+    }
+    pub fn require_dataset(&self, id: &str) -> Result<()> {
+        self.check_dataset(id)
     }
     fn check_dataset(&self, id: &str) -> Result<()> {
+        self.ensure_ready()?;
         if id == self.dataset_id {
             Ok(())
         } else {

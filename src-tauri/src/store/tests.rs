@@ -8,6 +8,8 @@ fn memory() -> Store {
     Store {
         dataset_id: Uuid::new_v4().to_string(),
         conn,
+        root: std::path::PathBuf::new(),
+        blocked: false,
     }
 }
 fn request(store: &Store) -> CreateRequest {

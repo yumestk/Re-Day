@@ -12,7 +12,7 @@ desktop-test = ["dep:tauri-plugin-wdio-webdriver"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -20,6 +20,11 @@ serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+tauri-plugin-dialog = "2"
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+fs2 = "0.4"
 
 [profile.release]
 codegen-units = 1

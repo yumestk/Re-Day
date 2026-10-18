@@ -19,6 +19,7 @@ async fn with_store<T: Send + 'static>(
             code: "STORAGE",
             message: "存储状态异常，请重启应用；本地文件已保留。".into(),
         })?;
+        store.ensure_ready()?;
         action(&mut store)
     })
     .await
@@ -201,11 +202,232 @@ async fn reschedule_ordinary(
     .await
 }
 
+fn native_error(error: impl std::fmt::Display) -> AppError {
+    eprintln!("Native file operation: {error}");
+    AppError {
+        code: "IO",
+        message: "文件操作未完成，请重试；原数据已保留。".into(),
+    }
+}
+fn authorize_images(app: &tauri::AppHandle, paths: &[std::path::PathBuf]) -> store::Result<()> {
+    for path in paths {
+        app.asset_protocol_scope()
+            .allow_directory(path, false)
+            .map_err(native_error)?;
+    }
+    Ok(())
+}
+async fn pick_paths(
+    app: tauri::AppHandle,
+    purpose: &'static str,
+) -> store::Result<Vec<std::path::PathBuf>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(feature = "desktop-test")]
+        {
+            let _ = app;
+            #[derive(serde::Deserialize)]
+            struct Choice {
+                purpose: String,
+                paths: Vec<std::path::PathBuf>,
+            }
+            let root = std::env::var_os("LIFEISRPG_TEST_DATA_DIR").expect("isolated test data");
+            let path = std::path::PathBuf::from(root).join("dialog.json");
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let bytes = std::fs::read(&path).map_err(native_error)?;
+            std::fs::remove_file(path).map_err(native_error)?;
+            let choice: Choice = serde_json::from_slice(&bytes).map_err(native_error)?;
+            if choice.purpose != purpose {
+                return Err(native_error("Test dialog purpose mismatch"));
+            }
+            Ok(choice.paths)
+        }
+        #[cfg(not(feature = "desktop-test"))]
+        {
+            use tauri_plugin_dialog::DialogExt;
+            let dialog = app.dialog().file();
+            let files = match purpose {
+                "images" => dialog
+                    .set_title("选择生活记录图片")
+                    .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+                    .blocking_pick_files()
+                    .unwrap_or_default(),
+                "export" => dialog
+                    .set_title("导出完整备份")
+                    .add_filter("LifeIsRPG 备份", &["zip"])
+                    .set_file_name(format!("LifeIsRPG-{}.zip", today()))
+                    .blocking_save_file()
+                    .into_iter()
+                    .collect(),
+                _ => dialog
+                    .set_title("选择完整备份")
+                    .add_filter("LifeIsRPG 备份", &["zip"])
+                    .blocking_pick_file()
+                    .into_iter()
+                    .collect(),
+            };
+            files
+                .into_iter()
+                .map(|f| f.into_path().map_err(native_error))
+                .collect()
+        }
+    })
+    .await
+    .map_err(native_error)?
+}
+#[tauri::command]
+async fn list_life_events(
+    state: State<'_, AppState>,
+    dataset_id: String,
+) -> store::Result<Vec<LifeEvent>> {
+    with_store(state, move |s| {
+        s.require_dataset(&dataset_id)?;
+        s.list_events()
+    })
+    .await
+}
+#[tauri::command]
+async fn load_life_event(
+    state: State<'_, AppState>,
+    dataset_id: String,
+    event_id: String,
+) -> store::Result<LifeEvent> {
+    with_store(state, move |s| {
+        s.require_dataset(&dataset_id)?;
+        s.event(&event_id)
+    })
+    .await
+}
+#[tauri::command]
+async fn save_life_event(
+    state: State<'_, AppState>,
+    request: SaveEvent,
+) -> store::Result<EventResult> {
+    with_store(state, move |s| s.save_event(request, &now())).await
+}
+#[tauri::command]
+async fn delete_life_event(
+    state: State<'_, AppState>,
+    request: DeleteEvent,
+) -> store::Result<EventResult> {
+    with_store(state, move |s| s.delete_event(request)).await
+}
+#[tauri::command]
+async fn pick_life_event_images(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    dataset_id: String,
+) -> store::Result<Vec<ImageView>> {
+    let paths = pick_paths(app, "images").await?;
+    with_store(state, move |s| s.import_images(&dataset_id, &paths)).await
+}
+#[tauri::command]
+async fn discard_life_event_images(
+    state: State<'_, AppState>,
+    dataset_id: String,
+    ids: Vec<String>,
+) -> store::Result<()> {
+    with_store(state, move |s| s.discard_images(&dataset_id, &ids)).await
+}
+#[tauri::command]
+async fn load_storage_info(
+    state: State<'_, AppState>,
+    dataset_id: String,
+) -> store::Result<StorageInfo> {
+    with_store(state, move |s| {
+        s.require_dataset(&dataset_id)?;
+        s.storage_info()
+    })
+    .await
+}
+#[tauri::command]
+async fn retry_storage_cleanup(
+    state: State<'_, AppState>,
+    dataset_id: String,
+) -> store::Result<StorageInfo> {
+    with_store(state, move |s| {
+        s.require_dataset(&dataset_id)?;
+        s.cleanup_obsolete()?;
+        s.storage_info()
+    })
+    .await
+}
+#[tauri::command]
+async fn export_backup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    dataset_id: String,
+) -> store::Result<Option<ExportResult>> {
+    let paths = pick_paths(app, "export").await?;
+    if let Some(path) = paths.into_iter().next() {
+        with_store(state, move |s| {
+            s.export_backup(&dataset_id, &path, &now()).map(Some)
+        })
+        .await
+    } else {
+        Ok(None)
+    }
+}
+#[tauri::command]
+async fn inspect_backup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    dataset_id: String,
+) -> store::Result<Option<RestorePreview>> {
+    let paths = pick_paths(app, "restore").await?;
+    if let Some(path) = paths.into_iter().next() {
+        with_store(state, move |s| {
+            s.inspect_backup(&dataset_id, &path).map(Some)
+        })
+        .await
+    } else {
+        Ok(None)
+    }
+}
+#[tauri::command]
+async fn discard_backup(
+    state: State<'_, AppState>,
+    dataset_id: String,
+    token: String,
+) -> store::Result<()> {
+    with_store(state, move |s| s.discard_backup(&dataset_id, &token)).await
+}
+#[tauri::command]
+async fn restore_backup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    request: RestoreRequest,
+) -> store::Result<RestoreResult> {
+    with_store(state, move |s| {
+        let old = s.image_scopes();
+        let token = request.token.clone();
+        let dataset = request.dataset_id.clone();
+        let mut allowed = vec![];
+        let result = s.restore_backup(request, |paths| {
+            allowed = paths.to_vec();
+            authorize_images(&app, paths)
+        });
+        if result.is_err() && s.ensure_ready().is_ok() {
+            let _ = s.discard_backup(&dataset, &token);
+        }
+        let revoke = if result.is_ok() { old } else { allowed };
+        for path in revoke {
+            app.asset_protocol_scope()
+                .forbid_directory(path, false)
+                .map_err(native_error)?;
+        }
+        result
+    })
+    .await
+}
+
 fn main() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "desktop-test")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -219,8 +441,10 @@ fn main() {
             let root = std::env::var_os("LIFEISRPG_TEST_DATA_DIR")
                 .map(std::path::PathBuf::from)
                 .expect("desktop-test requires an isolated LIFEISRPG_TEST_DATA_DIR");
+            let store = Store::open(&root)?;
+            authorize_images(app.handle(), &store.image_scopes())?;
             app.manage(AppState {
-                store: Arc::new(Mutex::new(Store::open(&root)?)),
+                store: Arc::new(Mutex::new(store)),
             });
             Ok(())
         })
@@ -249,7 +473,19 @@ fn main() {
             save_review,
             skip_plan,
             preview_ordinary_reschedule,
-            reschedule_ordinary
+            reschedule_ordinary,
+            list_life_events,
+            load_life_event,
+            save_life_event,
+            delete_life_event,
+            pick_life_event_images,
+            discard_life_event_images,
+            load_storage_info,
+            export_backup,
+            inspect_backup,
+            discard_backup,
+            restore_backup,
+            retry_storage_cleanup
         ])
         .build(tauri::generate_context!())
         .expect("LifeIsRPG could not open its local data. Existing files were preserved.")

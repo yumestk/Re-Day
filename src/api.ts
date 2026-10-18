@@ -92,6 +92,18 @@ export function errorMessage(error: unknown): string {
 
 // The only IPC boundary: components deal with task intentions, never SQL or paths.
 export const api = {
+  events: (datasetId: string) => invoke<LifeEvent[]>('list_life_events', { datasetId }),
+  event: (datasetId: string, eventId: string) => invoke<LifeEvent>('load_life_event', { datasetId, eventId }),
+  saveEvent: (datasetId: string, eventId: string, expectedRevision: number | null, draft: EventDraft) => invoke<EventResult>('save_life_event', { request: { datasetId, eventId, expectedRevision, draft } }),
+  deleteEvent: (datasetId: string, event: LifeEvent) => invoke<EventResult>('delete_life_event', { request: { datasetId, eventId: event.id, expectedRevision: event.revision } }),
+  pickImages: (datasetId: string) => invoke<ImageView[]>('pick_life_event_images', { datasetId }),
+  discardImages: (datasetId: string, ids: string[]) => invoke<void>('discard_life_event_images', { datasetId, ids }),
+  storageInfo: (datasetId: string) => invoke<StorageInfo>('load_storage_info', { datasetId }),
+  exportBackup: (datasetId: string) => invoke<ExportResult | null>('export_backup', { datasetId }),
+  inspectBackup: (datasetId: string) => invoke<RestorePreview | null>('inspect_backup', { datasetId }),
+  discardBackup: (datasetId: string, token: string) => invoke<void>('discard_backup', { datasetId, token }),
+  restoreBackup: (datasetId: string, preview: RestorePreview) => invoke<RestoreResult>('restore_backup', { request: { datasetId, token: preview.token, backupDigest: preview.backupDigest, confirmed: true } }),
+  cleanupStorage: (datasetId: string) => invoke<StorageInfo>('retry_storage_cleanup', { datasetId }),
   loadDate: (date: string) => invoke<DateView>('load_date', { date }),
   loadCalendar: (month: string) => invoke<MonthView>('load_calendar', { month }),
   reviewPrompt: () => invoke<ReviewState | null>('load_review_prompt'),
@@ -137,3 +149,13 @@ export interface DateView { datasetId: string; date: string; today: string; plan
 export interface MonthView { month: string; days: DaySummary[] }
 export interface RescheduleRequest { datasetId: string; planId: string; makeupId: string; expectedRevision: number; expectedQuestRevision: number; date: string; slot: Slot; startTime: string | null; endTime: string | null }
 export interface ReschedulePreview { target: TaskItem | null; fingerprint: string }
+
+export interface ImageView { id: string; url: string; byteSize: number; staged: boolean }
+export interface EventDraft { title: string; eventOn: string; note: string; tags: string[]; isMilestone: boolean; goalId: string | null; questId: string | null; imageIds: string[] }
+export interface LifeEvent extends Omit<EventDraft, 'imageIds'> { id: string; createdAt: string; revision: number; images: ImageView[] }
+export interface EventResult { event: LifeEvent | null; cleanupPending: boolean }
+export interface DataCounts { goals: number; quests: number; plans: number; records: number; events: number; images: number }
+export interface StorageInfo { counts: DataCounts; cleanupPending: boolean }
+export interface ExportResult { fileName: string; counts: DataCounts }
+export interface RestorePreview { token: string; datasetId: string; backupDigest: string; exportedAt: string; current: DataCounts; incoming: DataCounts }
+export interface RestoreResult { datasetId: string; cleanupPending: boolean }

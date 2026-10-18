@@ -8,6 +8,8 @@ fn store() -> Store {
     Store {
         dataset_id: Uuid::new_v4().to_string(),
         conn,
+        root: std::path::PathBuf::new(),
+        blocked: false,
     }
 }
 fn add(s: &mut Store) -> Quest {

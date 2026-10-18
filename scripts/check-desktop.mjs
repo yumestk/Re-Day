@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { checkRecurrence } from './check-recurrence.mjs';
 import { checkCalendar } from './check-calendar.mjs';
+import { checkArchive } from './check-archive.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -132,12 +133,12 @@ try {
   await sql('DROP TRIGGER qa_fail;');
   await execute('document.querySelector("button[aria-label=关闭错误提示]").click()');
   log('injected SQLite failure leaves no half-write, completion animation or success sound');
-  await execute('Array.from(document.querySelectorAll("button")).find(e=>e.textContent.includes("声音与动效")).click()');
+  await execute('Array.from(document.querySelectorAll("button")).find(e=>e.textContent.includes("设置与数据")).click()');
   await click('input[aria-label="交互音效"]');
   await until(async () => await sql("SELECT json_extract(value,'$.soundEnabled') FROM settings WHERE key='preferences';") === '0', 'mute persisted');
   await click('input[aria-label="减少动效"]');
   await until(async () => await execute('return document.querySelector("[data-reduced-motion]").dataset.reducedMotion') === 'true', 'reduced motion');
-  await click('button[aria-label="关闭对话框"]');
+  await execute('Array.from(document.querySelectorAll("button")).find(e=>e.textContent.trim()==="Today今日行动").click()');
   const muted = await execute('return {sounds:window.__sounds,animations:window.__animations}');
   await click(doneButton('整理生活片段与照片'));
   await until(() => isDone('整理生活片段与照片'), 'muted completion');
@@ -292,6 +293,7 @@ try {
   log('phase-two metadata and promoted hierarchy survive restart');
   await checkRecurrence({ click, fill, execute, until, sql, has, screenshot, clickText, openQuest, saveForm, stop, start, log });
   await checkCalendar({ click, fill, execute, until, sql, has, screenshot, clickText, openQuest, saveForm, stop, start, log });
+  await checkArchive({ root, click, fill, execute, until, sql, has, screenshot, clickText, saveForm, stop, start, log });
   await clickText('Today今日行动');
   await until(() => has('今日安排'), 'return Today');
   // Exercise keyboard and native close-request handling, without adding a test-only product command.

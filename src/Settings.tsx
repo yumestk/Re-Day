@@ -1,0 +1,29 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, errorMessage, type Preferences, type RunMutation, type RestorePreview, type RestoreResult, type StorageInfo, type DataCounts } from './api';
+import { Modal, Icon } from './ui';
+import s from './App.module.css';
+const fields: [keyof DataCounts,string][]=[['goals','目标'],['quests','任务'],['plans','安排'],['records','执行记录'],['events','生活事件'],['images','图片资源']];
+export function Settings({ datasetId, preferences, systemReduced, busy, refresh, run, onPreference, onRestored }: { datasetId:string; preferences:Preferences; systemReduced:boolean; busy:boolean; refresh:number; run:RunMutation; onPreference:(key:'soundEnabled'|'reducedMotion',value:boolean)=>Promise<void>; onRestored:(result:RestoreResult)=>Promise<void> }) {
+  const [info,setInfo]=useState<StorageInfo|null>(null);
+  const [error,setError]=useState('');
+  const [loadError,setLoadError]=useState('');
+  const [retry,setRetry]=useState(0);
+  const [notice,setNotice]=useState('');
+  const [preview,setPreview]=useState<RestorePreview|null>(null);
+  const [confirmed,setConfirmed]=useState(false);
+  const previewRef=useRef<RestorePreview|null>(null);
+  previewRef.current=preview;
+  useEffect(()=>{let cancelled=false;setLoadError('');void api.storageInfo(datasetId).then(v=>{if(!cancelled)setInfo(v);}).catch(e=>{if(!cancelled)setLoadError(errorMessage(e));});return()=>{cancelled=true;};},[datasetId,refresh,retry]);
+  useEffect(()=>()=>{if(previewRef.current)void api.discardBackup(datasetId,previewRef.current.token).catch(()=>{});},[datasetId]);
+  const cancel=useCallback(()=>{if(busy)return;const p=previewRef.current;setPreview(null);setConfirmed(false);if(p)void api.discardBackup(datasetId,p.token).catch(e=>setError(errorMessage(e)));},[datasetId,busy]);
+  const exportFile=async()=>{setNotice('');const result=await run('maintenance',()=>api.exportBackup(datasetId));if(result)setNotice(`完整备份已导出：${result.fileName}（含 ${result.counts.images} 张图片）`);};
+  const inspect=async()=>{setNotice('');const result=await run('maintenance',()=>api.inspectBackup(datasetId));if(result){setConfirmed(false);setPreview(result);}};
+  const restore=async()=>{if(!preview||!confirmed)return;const result=await run('maintenance',()=>api.restoreBackup(datasetId,preview));if(result){setPreview(null);await onRestored(result);}else{const current=await api.loadWorkspace().catch(()=>null);if(current&&current.datasetId!==datasetId){setPreview(null);await onRestored({datasetId:current.datasetId,cleanupPending:true});return;}setPreview(null);void api.discardBackup(datasetId,preview.token).catch(()=>{});setError('恢复未完成。请重新选择备份并校验；若提示重启，请先退出再重开。');setRetry(v=>v+1);}};
+  const cleanup=async()=>{const result=await run('maintenance',()=>api.cleanupStorage(datasetId));if(result){setInfo(result);setNotice(result.cleanupPending?'仍有资源未能清理，请检查目录权限后重试。':'无引用资源已清理。');}};
+  return <section className={s.settingsPage} aria-label="设置与数据"><header className={s.collectionHero}><span className={s.eyebrow}>YOUR DEVICE / YOUR DATA</span><h1>SETTINGS<span>.</span></h1><p>界面随你调整，数据始终留在本地。</p></header><section className={s.settingsSection}><h2>声音与动效</h2><div className={s.preferenceRows}>
+    <label><Icon name={preferences.soundEnabled?'volume':'mute'}/><span><b>交互音效</b><small>完成与撤销时播放短音效</small></span><input type="checkbox" role="switch" aria-label="交互音效" checked={preferences.soundEnabled} disabled={busy} onChange={e=>void onPreference('soundEnabled',e.target.checked)}/></label><label><Icon name="motion"/><span><b>减少动效</b><small>{systemReduced?'系统已启用减少动效':'保留清晰的状态，减少移动与缩放'}</small></span><input type="checkbox" role="switch" aria-label="减少动效" checked={preferences.reducedMotion} disabled={busy} onChange={e=>void onPreference('reducedMotion',e.target.checked)}/></label></div></section>
+    <section className={s.settingsSection}><h2>本地数据</h2>{info?<div className={s.storageCounts}>{fields.map(([key,label])=><div key={key}><b>{info.counts[key]}</b><span>{label}</span></div>)}</div>:<p role="status">正在读取数据概览…</p>}{info?.cleanupPending&&<p role="status">部分无引用图片待清理。有效引用的图片会保留。</p>}<div className={s.contextActions}><button className={s.secondaryButton} disabled={busy} onClick={()=>void cleanup()}>重试资源清理</button></div></section>
+    <section className={s.settingsSection}><h2>完整备份与恢复</h2><p>ZIP 包包含目标、任务、安排、执行、生活事件、全部被引用图片和偏好。选择恢复文件后先校验与预览；只有明确确认后才完整替换当前数据。</p><div className={s.contextActions}><button className={s.primaryButton} disabled={busy} onClick={()=>void exportFile()}>导出完整备份</button><button className={s.secondaryButton} disabled={busy} onClick={()=>void inspect()}>选择备份并校验</button></div>{busy&&<p role="status">正在处理本地文件，请等待完成；当前暂停数据修改。</p>}{notice&&<p role="status">{notice}</p>}{(error||loadError)&&<div className={s.error} role="alert">{error||loadError}<button onClick={()=>setRetry(v=>v+1)}>重新读取</button></div>}</section>
+    {preview&&<Modal title="确认完整替换恢复" onClose={cancel}><p className={s.modalIntro}>将用 {new Date(preview.exportedAt).toLocaleString('zh-CN')} 导出的备份，完整替换当前全部数据及偏好。不会合并。数据库与图片完整性校验已通过。</p><table className={s.restoreCounts}><thead><tr><th>内容</th><th>当前（将替换）</th><th>备份（将恢复）</th></tr></thead><tbody>{fields.map(([key,label])=><tr key={key}><td>{label}</td><td>{preview.current[key]}</td><td>{preview.incoming[key]}</td></tr>)}</tbody></table><p className={s.formHint}>如需保留当前内容，可先取消并导出一份备份。预览之后数据或源文件发生变化，会要求重新校验。</p><label className={s.checkLabel}><input type="checkbox" aria-label="确认完整替换数据" checked={confirmed} disabled={busy} onChange={e=>setConfirmed(e.target.checked)}/>我确认替换当前全部数据、图片及偏好</label><div className={s.exitActions}><button className={s.dangerButton} disabled={busy||!confirmed} onClick={()=>void restore()}>确认替换并恢复</button><button className={s.secondaryButton} disabled={busy} onClick={cancel}>取消，保留当前数据</button></div></Modal>}
+  </section>;
+}

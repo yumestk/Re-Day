@@ -26,6 +26,18 @@ fn main() {
             "skip_plan",
             "preview_ordinary_reschedule",
             "reschedule_ordinary",
+            "list_life_events",
+            "load_life_event",
+            "save_life_event",
+            "delete_life_event",
+            "pick_life_event_images",
+            "discard_life_event_images",
+            "load_storage_info",
+            "export_backup",
+            "inspect_backup",
+            "discard_backup",
+            "restore_backup",
+            "retry_storage_cleanup",
         ]),
     ))
     .expect("Tauri build configuration is invalid");
