@@ -15,7 +15,8 @@
     "desktop:build": "tauri build --bundles app",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "assets:sound": "node scripts/generate-sounds.mjs",
-    "test:desktop": "node scripts/check-desktop.mjs"
+    "test:desktop": "node scripts/check-desktop.mjs",
+    "test:audio": "node scripts/check-audio.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.4",

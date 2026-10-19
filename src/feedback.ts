@@ -13,7 +13,7 @@ export function preloadSounds() {
         return response.arrayBuffer();
       });
       // A missing audio device or asset never prevents task management.
-      void bytes.catch(() => {});
+      void bytes.catch(() => { if (encoded.get(cue) === bytes) encoded.delete(cue); });
       encoded.set(cue, bytes);
     }
   }
@@ -22,17 +22,25 @@ export function preloadSounds() {
 export function primeAudio() {
   if (muted) return;
   try {
-    context ??= new AudioContext();
+    if (!context || context.state === 'closed') context = new AudioContext();
+    const audio = context;
     void context.resume().catch(() => {});
     preloadSounds();
     for (const [cue, bytes] of encoded) {
       if (!decoded.has(cue)) {
-        const buffer = bytes.then(data => context!.decodeAudioData(data.slice(0)));
-        void buffer.catch(() => {});
+        const buffer = bytes.then(data => audio.decodeAudioData(data.slice(0)));
+        void buffer.catch(() => { if (decoded.get(cue) === buffer) decoded.delete(cue); });
         decoded.set(cue, buffer);
       }
     }
   } catch { /* Audio is optional; persisted task feedback still has text and visuals. */ }
+}
+
+export function resetAudioSession() {
+  const previous = context;
+  context = undefined;
+  playing.clear();
+  if (previous && previous.state !== 'closed') void previous.close().catch(() => {});
 }
 
 export function muteAudio(value: boolean) {
@@ -47,12 +55,15 @@ export async function playCue(cue: Cue) {
   if (muted) return;
   primeAudio();
   try {
+    const audio = context;
     const buffer = await decoded.get(cue);
-    if (!buffer || !context || muted) return;
+    if (!buffer || !audio || muted) return;
+    await audio.resume();
+    if (audio !== context || audio.state !== 'running' || muted) return;
     if (playing.size >= 5) playing.values().next().value?.stop();
-    const source = context.createBufferSource();
+    const source = audio.createBufferSource();
     source.buffer = buffer;
-    source.connect(context.destination);
+    source.connect(audio.destination);
     playing.add(source);
     source.onended = () => { playing.delete(source); source.disconnect(); };
     source.start();

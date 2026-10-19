@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauri } from '@tauri-apps/api/core';
 import { api, errorMessage, slots, type DayView, type Preferences, type Slot, type TaskDraft, type TaskItem, type Workspace, type Goal, type DeletePreview } from './api';
-import { muteAudio, playCue, preloadSounds, primeAudio } from './feedback';
+import { muteAudio, playCue, preloadSounds, primeAudio, resetAudioSession } from './feedback';
 import s from './App.module.css';
 import { Icon, Modal } from './ui';
 import { QuestLinks } from './editors';
@@ -64,6 +64,11 @@ export default function App() {
   }, []);
   useEffect(() => { void load(date); }, [date, load]);
   useEffect(() => { preloadSounds(); }, []);
+  useEffect(() => {
+    // Refresh the output session on return; decoded sound buffers remain reusable.
+    window.addEventListener('focus', resetAudioSession);
+    return () => { window.removeEventListener('focus', resetAudioSession); resetAudioSession(); };
+  }, []);
   useEffect(() => { muteAudio(!preferences?.soundEnabled); }, [preferences?.soundEnabled]);
   useEffect(() => {
     const media = matchMedia('(prefers-reduced-motion: reduce)');
